@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Headpilot</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <aside class="sidebar">
+        <div class="sidebar-header">🚀 Headpilot</div>
+        <ul class="nav-links">
+            <li><a href="#" id="nav-dashboard" onclick="loadView('dashboard')">Startseite (Übersicht)</a></li>
+            <li><a href="#" id="nav-nodes" onclick="loadView('nodes')">Geräte (Nodes)</a></li>
+            <li><a href="#" id="nav-users" onclick="loadView('users')">Benutzer (Users)</a></li>
+            <li><a href="#" id="nav-keys" onclick="loadView('keys')">Pre-Auth Keys</a></li>
+        </ul>
+    </aside>
+
+    <main class="main-content" id="app-content">
+        <h2>Lade Anwendung...</h2>
+    </main>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

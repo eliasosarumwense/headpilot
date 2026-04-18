@@ -1,0 +1,23 @@
+<h1>Benutzerverwaltung</h1>
+<p class="subtitle">Erstelle, bearbeite oder lösche Benutzer in deinem VPN</p>
+
+<div class="action-bar">
+    <input type="text" id="new-user-name" placeholder="Neuer Benutzername (z.B. elias-macbook)">
+    <button class="btn-primary" onclick="createUser()">+ Benutzer anlegen</button>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>BENUTZERNAME</th>
+                <th>ERSTELLT AM</th>
+                <th>AKTIONEN</th>
+            </tr>
+        </thead>
+        <tbody id="users-table-body">
+            <tr><td colspan="4">Lade Benutzer...</td></tr>
+        </tbody>
+    </table>
+</div>
