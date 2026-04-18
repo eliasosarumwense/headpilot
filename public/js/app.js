@@ -44,7 +44,6 @@ async function fetchNodes() {
     } catch (e) { tbody.innerHTML = '<tr><td colspan="4" style="color:red;">Fehler beim Laden!</td></tr>'; }
 }
 
-// --- API LOGIK: USERS ---
 async function fetchUsers() {
     try {
         const res = await fetch('/api/users');
@@ -53,13 +52,14 @@ async function fetchUsers() {
         tbody.innerHTML = ''; 
         if (data.users && data.users.length > 0) {
             data.users.forEach(u => {
+                // FIX: Wir übergeben bei onclick jetzt u.id UND u.name!
                 tbody.innerHTML += `<tr>
                     <td>${u.id}</td>
                     <td><strong>${u.name}</strong></td>
                     <td>${new Date(u.createdAt).toLocaleString()}</td>
                     <td class="action-cell">
-                        <button class="btn-warning" onclick="renameUser('${u.name}')">Umbenennen</button>
-                        <button class="btn-danger" onclick="deleteUser('${u.name}')">Löschen</button>
+                        <button class="btn-warning" onclick="renameUser(${u.id}, '${u.name}')">Umbenennen</button>
+                        <button class="btn-danger" onclick="deleteUser(${u.id}, '${u.name}')">Löschen</button>
                     </td>
                 </tr>`;
             });
@@ -72,58 +72,139 @@ async function createUser() {
     if (!name) return alert("Name eingeben!");
     try {
         await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+        document.getElementById('new-user-name').value = '';
         fetchUsers();
     } catch (e) { alert("Fehler beim Erstellen"); }
 }
 
-async function renameUser(oldName) {
+// FIX: Die Funktion nimmt jetzt ID und Name an
+async function renameUser(id, oldName) {
     const newName = prompt(`Neuer Name für "${oldName}":`);
-    if (!newName) return;
+    if (!newName || newName.trim() === "") return;
     try {
-        await fetch(`/api/users/${oldName}/rename/${newName.trim()}`, { method: 'POST' });
+        const res = await fetch(`/api/users/${id}/rename/${newName.trim()}`, { method: 'POST' });
+        if (!res.ok) throw new Error("Fehler beim Umbenennen");
         fetchUsers();
-    } catch (e) { alert("Fehler beim Umbenennen"); }
+    } catch (e) { alert("🚨 Fehler: " + e.message); }
 }
 
-async function deleteUser(name) {
+// FIX: Die Funktion nimmt jetzt ID und Name an
+async function deleteUser(id, name) {
     if (!confirm(`Benutzer "${name}" wirklich löschen?`)) return;
     try {
-        await fetch(`/api/users/${name}`, { method: 'DELETE' });
+        // Wir schicken die ID an unser Node.js Backend
+        const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+
+        if (!res.ok) throw new Error(data.error || "Unbekannter Fehler");
+
         fetchUsers();
-    } catch (e) { alert("Fehler beim Löschen"); }
+    } catch (e) {
+        alert("🚨 Echter Fehlerbericht vom Server:\n\n" + e.message);
+    }
 }
 
+// --- API LOGIK: DASHBOARD / ÜBERSICHT ---
+// --- API LOGIK: DASHBOARD / ÜBERSICHT ---
 async function fetchDashboardStats() {
     try {
-        // Wir fragen beide Routen gleichzeitig ab, um Zeit zu sparen
-        const [nodesRes, usersRes] = await Promise.all([
+        // Wir laden jetzt alle 4 Datenquellen auf einmal!
+        const [nodesRes, usersRes, routesRes, keysRes] = await Promise.all([
             fetch('/api/nodes'),
-            fetch('/api/users')
+            fetch('/api/users'),
+            fetch('/api/routes'),
+            fetch('/api/keys') // <-- NEU: Alle Keys abrufen
         ]);
         
         const nodesData = await nodesRes.json();
         const usersData = await usersRes.json();
+        const routesData = await routesRes.json();
+        const keysData = await keysRes.json(); // <-- NEU
 
-        // Zahlen in die Karten eintragen (oder 0, falls leer)
-        const totalNodes = nodesData.nodes ? nodesData.nodes.length : 0;
-        const totalUsers = usersData.users ? usersData.users.length : 0;
+        const formatList = (arr) => {
+            if (!arr || arr.length === 0) return "Keine Einträge";
+            if (arr.length <= 3) return arr.join(', ');
+            return `${arr.slice(0, 3).join(', ')} und ${arr.length - 3} weitere`;
+        };
+
+        const jetzt = new Date();
+
+        // 1. Benutzer
+        const usersList = usersData.users ? usersData.users.map(u => u.name) : [];
+        document.getElementById('stat-users').innerText = usersList.length;
+        document.getElementById('detail-users').innerText = formatList(usersList);
+
+        // 2. Nodes & Online & Ablauf
+        const nodesList = [];
+        const onlineList = [];
+        const expiringList = [];
+        let totalNodes = 0;
+
+        if (nodesData.nodes) {
+            totalNodes = nodesData.nodes.length;
+            nodesData.nodes.forEach(node => {
+                const nodeName = node.givenName || node.name;
+                nodesList.push(nodeName);
+
+                if (node.online === true) onlineList.push(nodeName);
+
+                const expiry = new Date(node.expiry);
+                if (expiry.getFullYear() > 2000) {
+                    const diffTage = (expiry - jetzt) / (1000 * 60 * 60 * 24);
+                    if (diffTage > 0 && diffTage <= 7) expiringList.push(nodeName);
+                }
+            });
+        }
 
         document.getElementById('stat-nodes').innerText = totalNodes;
-        document.getElementById('stat-users').innerText = totalUsers;
+        document.getElementById('detail-nodes').innerText = formatList(nodesList);
+
+        document.getElementById('stat-online').innerText = `${onlineList.length} / ${totalNodes}`;
+        document.getElementById('detail-online').innerText = onlineList.length > 0 ? formatList(onlineList) : "Alle Geräte offline";
+
+        document.getElementById('stat-expiring').innerText = expiringList.length;
+        document.getElementById('detail-expiring').innerText = expiringList.length > 0 ? formatList(expiringList) : "Keine baldigen Abläufe";
+        if (expiringList.length > 0) document.getElementById('stat-expiring').classList.add('color-danger');
+
+        // 3. Routen
+        const routesList = [];
+        if (routesData.routes) {
+            routesData.routes.filter(r => r.enabled).forEach(r => routesList.push(r.prefix));
+        }
+        document.getElementById('stat-routes').innerText = routesList.length;
+        document.getElementById('detail-routes').innerText = routesList.length > 0 ? formatList(routesList) : "Keine aktiven Subnetze";
+
+        // 4. Keys (FIXED!)
+        let activeKeysCount = 0;
+        const usersWithKeys = new Set();
+        
+        if (keysData.preAuthKeys) {
+            keysData.preAuthKeys.forEach(k => {
+                // Ist der Key in der Zukunft?
+                if (new Date(k.expiration) > jetzt) {
+                    activeKeysCount++;
+                    // Headscale liefert uns mit, wem der Key gehört
+                    if (k.user && k.user.name) {
+                        usersWithKeys.add(k.user.name);
+                    }
+                }
+            });
+        }
+
+        document.getElementById('stat-keys').innerText = activeKeysCount;
+        const keysUsersArr = Array.from(usersWithKeys);
+        document.getElementById('detail-keys').innerText = activeKeysCount > 0 ? `Ausstehend für: ${formatList(keysUsersArr)}` : "Keine offenen Keys";
+        if (activeKeysCount > 0) document.getElementById('stat-keys').classList.add('color-warning');
 
     } catch (e) {
-        console.error("Fehler beim Laden der Statistiken", e);
-        document.getElementById('stat-nodes').innerText = "ERR";
-        document.getElementById('stat-users').innerText = "ERR";
+        console.error("Fehler beim Laden", e);
     }
 }
 
 // --- API LOGIK: KEYS ---
 
-// Wird aufgerufen, sobald die Keys-Seite öffnet
 async function initKeysView() {
     try {
-        // Holt alle Benutzer, um das Dropdown-Menü zu füllen
         const res = await fetch('/api/users');
         const data = await res.json();
         const select = document.getElementById('key-user-select');
@@ -131,20 +212,21 @@ async function initKeysView() {
         select.innerHTML = '<option value="">-- Benutzer wählen --</option>';
         if (data.users && data.users.length > 0) {
             data.users.forEach(u => {
-                select.innerHTML += `<option value="${u.name}">${u.name}</option>`;
+                // FIX: Wir speichern die ID (Zahl) versteckt im Attribut "data-id"!
+                select.innerHTML += `<option value="${u.name}" data-id="${u.id}">${u.name}</option>`;
             });
         }
     } catch (e) {
-        console.error("Fehler beim Laden der User für das Dropdown", e);
+        console.error("Fehler beim Laden", e);
     }
 }
 
-// Holt die aktiven Keys für den im Dropdown gewählten User
 async function fetchKeys() {
-    const user = document.getElementById('key-user-select').value;
+    const select = document.getElementById('key-user-select');
+    const userName = select.value;
     const tbody = document.getElementById('keys-table-body');
     
-    if (!user) {
+    if (!userName) {
         tbody.innerHTML = '<tr><td colspan="4">Bitte wähle oben einen Benutzer aus.</td></tr>';
         return;
     }
@@ -152,16 +234,24 @@ async function fetchKeys() {
     tbody.innerHTML = '<tr><td colspan="4">Lade Keys...</td></tr>';
 
     try {
-        const res = await fetch(`/api/keys?user=${user}`);
+        // Wir laden alle Keys vom Server
+        const res = await fetch(`/api/keys`);
         const data = await res.json();
         tbody.innerHTML = '';
         
         if (data.preAuthKeys && data.preAuthKeys.length > 0) {
-            // Filtern: Wir wollen nur Keys anzeigen, die noch nicht abgelaufen sind
-            const activeKeys = data.preAuthKeys.filter(k => new Date(k.expiration) > new Date());
+            const jetzt = new Date();
+            jetzt.setSeconds(jetzt.getSeconds() + 10); // 10 Sekunden Puffer
+            
+            // FIX: Wir filtern nach Keys, die aktiv sind UND exakt diesem User gehören!
+            const activeKeys = data.preAuthKeys.filter(k => {
+                const isRightUser = (k.user && k.user.name === userName);
+                const isNotExpired = new Date(k.expiration) > jetzt;
+                return isRightUser && isNotExpired;
+            });
             
             if(activeKeys.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4">Keine aktiven Keys für diesen Benutzer.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="4">Keine aktiven Keys für diesen Benutzer gefunden.</td></tr>';
                 return;
             }
 
@@ -170,66 +260,77 @@ async function fetchKeys() {
                     <td><code>${k.key}</code></td>
                     <td>${k.reusable ? 'Ja' : 'Nein'}</td>
                     <td>${new Date(k.expiration).toLocaleString()}</td>
-                    <td><button class="btn-danger" onclick="expireKey('${user}', '${k.key}')">Ablaufen lassen</button></td>
+                    <td><button class="btn-danger" onclick="expireKey('${userName}', '${k.key}')">Ablaufen lassen</button></td>
                 </tr>`;
             });
         } else {
-            tbody.innerHTML = '<tr><td colspan="4">Keine Keys für diesen Benutzer.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4">Keine Keys auf dem Server gefunden.</td></tr>';
         }
     } catch (e) {
         tbody.innerHTML = '<tr><td colspan="4" style="color:red;">Fehler beim Laden!</td></tr>';
     }
 }
 
-// Generiert einen neuen Key
 async function createKey() {
-    const user = document.getElementById('key-user-select').value;
+    const select = document.getElementById('key-user-select');
+    const userName = select.value;
     const reusable = document.getElementById('key-reusable').checked;
     
-    if (!user) return alert("Bitte wähle zuerst einen Benutzer aus dem Dropdown aus!");
+    if (!userName) return alert("Bitte wähle zuerst einen Benutzer aus!");
 
-    // Setzt das Ablaufdatum standardmäßig auf +30 Tage ab heute
+    // FIX: Wir lesen die ID aus und machen zwingend eine Zahl (Integer) daraus!
+    const userId = parseInt(select.options[select.selectedIndex].getAttribute('data-id'), 10);
+
     const expirationDate = new Date();
     expirationDate.setDate(expirationDate.getDate() + 30);
+    const safeExpiration = expirationDate.toISOString().split('.')[0] + "Z";
 
     try {
         const res = await fetch('/api/keys', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                user: user,
+                user: userId, // <-- HIER SCHICKEN WIR JETZT DIE ZAHL STATT DEM NAMEN
                 reusable: reusable,
                 ephemeral: false,
-                expiration: expirationDate.toISOString()
+                expiration: safeExpiration
             })
         });
         
-        if (!res.ok) throw new Error("Fehler beim Generieren des Keys.");
-        
         const data = await res.json();
         
-        // WICHTIG: Headscale zeigt den kompletten Key aus Sicherheitsgründen nur ein einziges Mal bei der Erstellung an!
-        alert(`WICHTIG! Neuer Key generiert:\n\nKopiere ihn jetzt. Er wird danach nie wieder komplett angezeigt!\n\n${data.preAuthKey.key}`);
+        if (!res.ok) throw new Error(data.error || data.message || "Unbekannter Fehler");
         
-        fetchKeys(); // Tabelle neu laden
+        alert(`WICHTIG! Neuer Key generiert:\n\nKopiere ihn jetzt. Er wird danach nie wieder komplett angezeigt!\n\n${data.preAuthKey.key}`);
+        fetchKeys();
     } catch (e) {
-        alert(e.message);
+        alert("🚨 Fehlerbericht vom Server:\n\n" + e.message);
     }
 }
 
-// Macht einen Key sofort unbrauchbar
-async function expireKey(user, key) {
-    if (!confirm("Möchtest du diesen Key wirklich vorzeitig ablaufen lassen?")) return;
+async function expireKey(userName, key) {
+    if (!confirm(`Möchtest du den Key ${key.substring(0,8)}... wirklich deaktivieren?`)) return;
     
     try {
-        await fetch('/api/keys/expire', {
+        const res = await fetch('/api/keys/expire', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user: user, key: key })
+            // Wir probieren es hier wieder mit dem userName (String)
+            body: JSON.stringify({ user: userName, key: key })
         });
-        fetchKeys(); // Tabelle neu laden
+        
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "Server lehnte das Ablaufen ab.");
+        }
+        
+        // WICHTIG: Kurz warten, damit Headscale Zeit hat, die DB zu aktualisieren
+        setTimeout(() => {
+            fetchKeys();
+        }, 500);
+
     } catch (e) {
-        alert("Fehler beim Ablaufen-lassen des Keys.");
+        alert("🚨 Fehler beim Deaktivieren: " + e.message);
     }
 }
 // Wenn das Skript geladen ist, starte mit der "nodes" Ansicht

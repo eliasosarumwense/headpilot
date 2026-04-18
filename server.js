@@ -69,47 +69,53 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
-// 3. Benutzer umbenennen
-app.post('/api/users/:oldName/rename/:newName', async (req, res) => {
+// 3. Benutzer umbenennen (Jetzt mit ID!)
+app.post('/api/users/:id/rename/:newName', async (req, res) => {
     try {
-        const { oldName, newName } = req.params;
-        const response = await fetch(`${HEADSCALE_URL}/api/v1/user/${oldName}/rename/${newName}`, {
+        const { id, newName } = req.params;
+        const response = await fetch(`${HEADSCALE_URL}/api/v1/user/${id}/rename/${newName}`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
         });
-        if (!response.ok) throw new Error(`Fehler: ${response.status}`);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Fehler ${response.status}: ${errorText}`);
+        }
         res.json(await response.json());
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// 4. Benutzer löschen
-app.delete('/api/users/:name', async (req, res) => {
+// 4. Benutzer löschen (Jetzt mit ID!)
+app.delete('/api/users/:id', async (req, res) => {
     try {
-        const response = await fetch(`${HEADSCALE_URL}/api/v1/user/${req.params.name}`, {
+        const response = await fetch(`${HEADSCALE_URL}/api/v1/user/${req.params.id}`, {
             method: 'DELETE',
             headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
         });
-        if (!response.ok) throw new Error(`Fehler: ${response.status}`);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Fehler ${response.status}: ${errorText}`);
+        }
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
-
 // --- PRE-AUTH KEYS ROUTEN ---
 
-// 1. Keys für einen bestimmten Benutzer abrufen
 app.get('/api/keys', async (req, res) => {
     try {
-        const userName = req.query.user;
-        if (!userName) return res.status(400).json({ error: "Benutzer fehlt" });
-
-        const response = await fetch(`${HEADSCALE_URL}/api/v1/preauthkey?user=${userName}`, {
+        const response = await fetch(`${HEADSCALE_URL}/api/v1/preauthkey`, {
             headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
         });
-        if (!response.ok) throw new Error(`Fehler: ${response.status}`);
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Fehler ${response.status}: ${errorText}`);
+        }
         res.json(await response.json());
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -126,11 +132,17 @@ app.post('/api/keys', async (req, res) => {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json' 
             },
-            body: JSON.stringify(req.body) // Erwartet: user, reusable, ephemeral, expiration
+            body: JSON.stringify(req.body)
         });
-        if (!response.ok) throw new Error(`Fehler: ${response.status}`);
+        
+        // HIER IST DER FIX: Wir lesen aus, was Headscale genau zu meckern hat
+        if (!response.ok) {
+            const errorText = await response.text(); 
+            throw new Error(`Headscale API-Fehler ${response.status}: ${errorText}`);
+        }
         res.json(await response.json());
     } catch (error) {
+        console.error("API Error bei Key-Generierung:", error.message);
         res.status(500).json({ error: error.message });
     }
 });
@@ -145,10 +157,31 @@ app.post('/api/keys/expire', async (req, res) => {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json' 
             },
-            body: JSON.stringify(req.body) // Erwartet: user, key
+            body: JSON.stringify(req.body)
         });
-        if (!response.ok) throw new Error(`Fehler: ${response.status}`);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Headscale Fehler beim Ablaufen: ${errorText}`);
+        }
+
         res.json({ success: true });
+    } catch (error) {
+        console.error("Expire Error:", error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/routes', async (req, res) => {
+    try {
+        const response = await fetch(`${HEADSCALE_URL}/api/v1/routes`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Fehler ${response.status}: ${errorText}`);
+        }
+        res.json(await response.json());
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

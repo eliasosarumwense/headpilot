@@ -1,21 +1,93 @@
 <h1>Server Übersicht</h1>
 <p class="subtitle">Allgemeine Informationen zu deiner Headscale Instanz</p>
 
-<div style="display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px;">
+<style>
+    /* Minimalistisches 3-Spalten-Grid */
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        margin-bottom: 30px;
+    }
     
-    <div class="card" style="flex: 1; min-width: 200px; text-align: center;">
-        <h3 style="color: #8e8fa7; font-size: 0.9rem; text-transform: uppercase;">Gesamte Benutzer</h3>
-        <p id="stat-users" style="font-size: 2.5rem; font-weight: bold; margin-top: 10px;">-</p>
+    /* Cleane, dunkle Karten ohne bunte Ränder */
+    .stat-card {
+        background: #1e1e2f; 
+        border: 1px solid #2a2b3d; 
+        border-radius: 8px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Dezente Überschriften */
+    .stat-card h3 {
+        color: #8e8fa7;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 12px;
+        font-weight: 600;
+    }
+
+    /* Große, cleane Zahlen */
+    .stat-card .stat-number {
+        font-size: 2.5rem;
+        font-weight: 300; 
+        color: #ffffff;
+        margin-bottom: 12px;
+    }
+
+    /* Kleine Detail-Texte (Namen, User) */
+    .stat-card .stat-details {
+        font-size: 0.8rem;
+        color: #6c757d;
+        line-height: 1.5;
+        min-height: 2.8em; /* Hält alle Karten gleich hoch, auch wenn der Text umbricht */
+    }
+
+    /* Subtile Farb-Akzente nur auf den Zahlen, wenn es wichtig ist */
+    .color-online { color: #4caf50 !important; }
+    .color-warning { color: #ff9800 !important; }
+    .color-danger { color: #f44336 !important; }
+</style>
+
+<div class="dashboard-grid">
+    <div class="stat-card">
+        <h3>Gesamte Benutzer</h3>
+        <div class="stat-number" id="stat-users">-</div>
+        <div class="stat-details" id="detail-users">Lade...</div>
     </div>
 
-    <div class="card" style="flex: 1; min-width: 200px; text-align: center;">
-        <h3 style="color: #8e8fa7; font-size: 0.9rem; text-transform: uppercase;">Registrierte Geräte</h3>
-        <p id="stat-nodes" style="font-size: 2.5rem; font-weight: bold; margin-top: 10px;">-</p>
+    <div class="stat-card">
+        <h3>Registrierte Geräte</h3>
+        <div class="stat-number" id="stat-nodes">-</div>
+        <div class="stat-details" id="detail-nodes">Lade...</div>
     </div>
 
-    <div class="card" style="flex: 1; min-width: 200px; text-align: center;">
-        <h3 style="color: #8e8fa7; font-size: 0.9rem; text-transform: uppercase;">Verbindung</h3>
-        <p style="font-size: 1.1rem; font-weight: bold; margin-top: 15px; color: #4caf50;">● Online</p>
+    <div class="stat-card">
+        <h3>Aktuell Online</h3>
+        <div class="stat-number color-online" id="stat-online">-</div>
+        <div class="stat-details" id="detail-online">Lade...</div>
     </div>
 
+    <div class="stat-card">
+        <h3>Offene Einladungen</h3>
+        <div class="stat-number" id="stat-keys">-</div>
+        <div class="stat-details" id="detail-keys">Lade...</div>
+    </div>
+
+    <div class="stat-card">
+        <h3>Ablaufende Sitzungen (< 7 T.)</h3>
+        <div class="stat-number" id="stat-expiring">-</div>
+        <div class="stat-details" id="detail-expiring">Lade...</div>
+    </div>
+
+    <div class="stat-card">
+        <h3>Aktive Routen</h3>
+        <div class="stat-number" id="stat-routes">-</div>
+        <div class="stat-details" id="detail-routes">Lade...</div>
+    </div>
 </div>
