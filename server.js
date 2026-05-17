@@ -12,7 +12,7 @@ app.use(express.json());
 // Variablen aus der .env Datei
 const PORT = process.env.PORT || 3000;
 const HEADSCALE_URL = process.env.HEADSCALE_URL;
-const API_KEY = process.env.HEADSCALE_API_KEY;
+const API_KEY = process.env.HEADSCALE_API_KEY || process.env.API_KEY;
 
 // Keycloak OIDC Variablen aus der .env
 const KEYCLOAK_URL = process.env.KEYCLOAK_REALM_URL;
