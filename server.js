@@ -37,6 +37,58 @@ app.get('/api/nodes', async (req, res) => {
     }
 });
 
+// 1. Node umbenennen
+app.post('/api/nodes/:id/rename/:newName', async (req, res) => {
+    try {
+        const { id, newName } = req.params;
+        const response = await fetch(`${HEADSCALE_URL}/api/v1/node/${id}/rename/${newName}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Fehler ${response.status}: ${errorText}`);
+        }
+        res.json(await response.json());
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 2. Node löschen
+app.delete('/api/nodes/:id', async (req, res) => {
+    try {
+        const response = await fetch(`${HEADSCALE_URL}/api/v1/node/${req.params.id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Fehler ${response.status}: ${errorText}`);
+        }
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 3. Node-Sitzung ablaufen lassen (Expire)
+app.post('/api/nodes/:id/expire', async (req, res) => {
+    try {
+        const response = await fetch(`${HEADSCALE_URL}/api/v1/node/${req.params.id}/expire`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Fehler ${response.status}: ${errorText}`);
+        }
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // 1. Alle Benutzer abrufen
 app.get('/api/users', async (req, res) => {
     try {

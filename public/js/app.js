@@ -30,18 +30,93 @@ async function fetchNodes() {
         const res = await fetch('/api/nodes');
         const data = await res.json();
         const tbody = document.getElementById('nodes-table-body');
-        tbody.innerHTML = ''; 
+        tbody.innerHTML = '';
+        
         if (data.nodes && data.nodes.length > 0) {
             data.nodes.forEach(n => {
+                const ips = n.ipAddresses ? n.ipAddresses.join(', ') : '-';
+                const lastSeen = new Date(n.lastSeen).toLocaleString();
+                
+                // Wir nehmen den echten, gesetzten Namen
+                const name = n.givenName || n.name;
+                
+                // Zeigt visuell an, ob das Gerät online ist
+                const isOnline = n.online ? '🟢' : '🔴';
+                
                 tbody.innerHTML += `<tr>
                     <td>${n.id}</td>
-                    <td><strong>${n.givenName || n.name}</strong></td>
-                    <td>${n.ipAddresses.join('<br>')}</td>
-                    <td>${new Date(n.lastSeen).toLocaleString()}</td>
+                    <td><strong>${isOnline} ${name}</strong><br><small style="color: #6c757d;">Besitzer: ${n.user.name}</small></td>
+                    <td><code>${ips}</code></td>
+                    <td>${lastSeen}</td>
+                    <td class="action-cell">
+                        <button class="btn-warning" onclick="renameNode(${n.id}, '${name}')">Umbenennen</button>
+                        <button class="btn-danger" style="background: #e67e22;" onclick="expireNode(${n.id}, '${name}')">Sitzung beenden</button>
+                        <button class="btn-danger" onclick="deleteNode(${n.id}, '${name}')">Löschen</button>
+                    </td>
                 </tr>`;
             });
-        } else tbody.innerHTML = '<tr><td colspan="4">Keine Geräte gefunden.</td></tr>';
-    } catch (e) { tbody.innerHTML = '<tr><td colspan="4" style="color:red;">Fehler beim Laden!</td></tr>'; }
+        } else {
+            tbody.innerHTML = '<tr><td colspan="5">Keine Geräte registriert.</td></tr>';
+        }
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" style="color:red;">Fehler beim Laden!</td></tr>';
+    }
+}
+
+// 1. Gerät umbenennen
+async function renameNode(id, oldName) {
+    const rawName = prompt(`Neuen Namen für Gerät "${oldName}" eingeben:\n\n(Hinweis: Wird automatisch für DNS in Kleinbuchstaben & Bindestriche umgewandelt)`);
+    if (!rawName || rawName.trim() === "") return;
+    
+    // FIX: Wir machen den Namen automatisch "Headscale-sicher" (DNS-konform)
+    // 1. trim(): Entfernt Leerzeichen am Anfang und Ende
+    // 2. toLowerCase(): Macht alles klein
+    // 3. replace(/\s+/g, '-'): Ersetzt alle Leerzeichen in der Mitte durch einen Bindestrich
+    // 4. replace(/[^a-z0-9-]/g, ''): Wirft alle komischen Sonderzeichen (!, ?, etc.) raus
+    const safeName = rawName.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    
+    try {
+        const res = await fetch(`/api/nodes/${id}/rename/${safeName}`, { method: 'POST' });
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "Fehler beim Umbenennen");
+        }
+        fetchNodes(); // Tabelle neu laden
+    } catch (e) {
+        alert("🚨 Fehler: " + e.message);
+    }
+}
+
+// 2. Sitzung zwingend beenden (Das Gerät verliert das VPN und muss neu in Keycloak einloggen)
+async function expireNode(id, name) {
+    if (!confirm(`Sitzung für Gerät "${name}" wirklich sofort beenden?\n\nDas Gerät wird aus dem VPN geworfen und muss sich neu authentifizieren!`)) return;
+    
+    try {
+        const res = await fetch(`/api/nodes/${id}/expire`, { method: 'POST' });
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "Fehler beim Beenden der Sitzung");
+        }
+        fetchNodes();
+    } catch (e) {
+        alert("🚨 Fehler: " + e.message);
+    }
+}
+
+// 3. Gerät dauerhaft löschen
+async function deleteNode(id, name) {
+    if (!confirm(`Gerät "${name}" wirklich komplett aus dem VPN löschen?\n\nAchtung: Das kann nicht rückgängig gemacht werden!`)) return;
+    
+    try {
+        const res = await fetch(`/api/nodes/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "Fehler beim Löschen");
+        }
+        fetchNodes();
+    } catch (e) {
+        alert("🚨 Echter Fehlerbericht vom Server:\n\n" + e.message);
+    }
 }
 
 async function fetchUsers() {

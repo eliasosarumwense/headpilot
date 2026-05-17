@@ -1,0 +1,39 @@
+name: Deploy Headpilot to VPS
+
+on:
+  push:
+    branches:
+      - main # Pipeline startet, sobald du auf 'main' pushst
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Code aus GitHub auschecken
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. Dateien via RSYNC auf den VPS kopieren
+      - name: Deploy to VPS via SSH
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets::VPS_HOST }}
+          username: ${{ secrets::VPS_USER }}
+          key: ${{ secrets::SSH_PRIVATE_KEY }}
+          port: 22
+          source: "./*"
+          target: "/root/headpilot"
+
+      # 3. NPM Pakete installieren und Systemd-Service neustarten
+      - name: Production Post-Deployment Actions
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets::VPS_HOST }}
+          username: ${{ secrets::VPS_USER }}
+          key: ${{ secrets::SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            cd /root/headpilot
+            npm install --production
+            sudo systemctl restart headpilot
