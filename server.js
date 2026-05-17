@@ -4,7 +4,7 @@ const cors = require('cors');
 const session = require('express-session'); // Für das Session-Management
 
 const app = express();
-
+app.set('trust proxy', 1);
 // Basis-Middleware
 app.use(cors());
 app.use(express.json());
