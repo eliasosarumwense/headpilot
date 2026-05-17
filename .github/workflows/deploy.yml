@@ -14,13 +14,13 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. Dateien via RSYNC auf den VPS kopieren
+      # 2. Dateien via SCP auf den VPS kopieren
       - name: Deploy to VPS via SSH
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets::VPS_HOST }}
-          username: ${{ secrets::VPS_USER }}
-          key: ${{ secrets::SSH_PRIVATE_KEY }}
+          host: ${{ secrets.VPS_HOST }}      # Mit Punkt statt Doppelpunkt
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           source: "./*"
           target: "/root/headpilot"
@@ -29,9 +29,9 @@ jobs:
       - name: Production Post-Deployment Actions
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets::VPS_HOST }}
-          username: ${{ secrets::VPS_USER }}
-          key: ${{ secrets::SSH_PRIVATE_KEY }}
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
             cd /root/headpilot
