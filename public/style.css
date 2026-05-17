@@ -33,6 +33,25 @@ body {
     gap: 10px;
 }
 
+.btn-logout {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #efefef;
+    text-decoration: none;
+    padding: 10px 15px;
+    border-radius: 6px;
+    background-color: transparent;
+    transition: all 0.2s ease;
+    font-weight: 500;
+}
+
+/* Rote Warnfarbe beim Hovern */
+.btn-logout:hover {
+    background-color: #dc3545; 
+    color: white;
+}
+
 .nav-links {
     list-style: none;
     padding: 20px 10px;

@@ -101,6 +101,10 @@ app.use(JEDER_ZUGRIFF_ERFORDERT_LOGIN);
 // Das Frontend wird erst NACH erfolgreichem Login freigegeben
 app.use(express.static('public'));
 
+app.get('/dashboard', (req, res) => {
+    res.redirect('/');
+});
+
 // =========================================================================
 // 3. GESCHÜTZTE API-ROUTEN (Alle ab hier erfordern eine gültige Session)
 // =========================================================================
