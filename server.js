@@ -19,7 +19,7 @@ const API_KEY = process.env.HEADSCALE_API_KEY || process.env.API_KEY;
 const KEYCLOAK_URL = process.env.KEYCLOAK_REALM_URL;
 const CLIENT_ID = process.env.KEYCLOAK_CLIENT_ID;
 const CLIENT_SECRET = process.env.KEYCLOAK_CLIENT_SECRET;
-const REDIRECT_URI = 'https://vpn.elias-osarumwense.com/login/callback';
+const REDIRECT_URI = process.env.REDIRECT_URI || 'https://vpn.elias-osarumwense.com/login/callback';
 
 app.use(session({
     // FIX 2: Fallback-String verhindert einen HTTP 500 Absturz, falls SESSION_SECRET mal temporär fehlt
@@ -27,7 +27,7 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: { 
-        secure: true, 
+        secure: process.env.COOKIE_SECURE === 'true',
         maxAge: 60 * 60 * 1000 
     }
 }));
