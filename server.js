@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const session = require('express-session'); // NEU: Für das Session-Management
+const session = require('express-session'); // Für das Session-Management
 
 const app = express();
 
@@ -14,13 +14,13 @@ const PORT = process.env.PORT || 3000;
 const HEADSCALE_URL = process.env.HEADSCALE_URL;
 const API_KEY = process.env.HEADSCALE_API_KEY;
 
-// NEU: Keycloak OIDC Variablen aus der .env
+// Keycloak OIDC Variablen aus der .env
 const KEYCLOAK_URL = process.env.KEYCLOAK_REALM_URL;
 const CLIENT_ID = process.env.KEYCLOAK_CLIENT_ID;
 const CLIENT_SECRET = process.env.KEYCLOAK_CLIENT_SECRET;
 const REDIRECT_URI = 'https://vpn.elias-osarumwense.com/login/callback';
 
-// NEU: Session-Cookie-Verwaltung aktivieren
+// Session-Cookie-Verwaltung aktivieren
 app.use(session({
     secret: process.env.SESSION_SECRET, // Nutzt dein neu generiertes Terminal-Secret
     resave: false,
@@ -60,7 +60,7 @@ app.get('/login/callback', async (req, res) => {
             })
         });
 
-        if (!response.ok) throw new Error('Token-Austausch bei Keycloak fehlgeschlagen');
+        if (!response.ok) throw new Error('Token-Austausch bei Keycloak failed');
 
         const tokenData = await response.json();
         
@@ -68,8 +68,8 @@ app.get('/login/callback', async (req, res) => {
         req.session.isAuthenticated = true;
         req.session.tokens = tokenData;
 
-        // Erfolgreich eingeloggt -> Weiterleitung zur Benutzeroberfläche
-        res.redirect('/');
+        // HIER IST DIE GEÄNDERTE ZEILE: Weiterleitung exklusiv auf den Unterpfad /dashboard
+        res.redirect('/dashboard');
     } catch (error) {
         console.error('OIDC Fehler:', error.message);
         res.status(500).send('Authentifizierungsfehler: ' + error.message);
