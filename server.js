@@ -12,22 +12,23 @@ app.use(express.json());
 // Variablen aus der .env Datei
 const PORT = process.env.PORT || 3000;
 const HEADSCALE_URL = process.env.HEADSCALE_URL;
-const API_KEY = process.env.HEADSCALE_API_KEY || process.env.API_KEY;
 
-// Keycloak OIDC Variablen aus der .env
+// FIX 1: Akzeptiert HEADSCALE_API_KEY oder das einfache API_KEY aus deiner .env
+const API_KEY = process.env.HEADSCALE_API_KEY || process.env.API_KEY; 
+
 const KEYCLOAK_URL = process.env.KEYCLOAK_REALM_URL;
 const CLIENT_ID = process.env.KEYCLOAK_CLIENT_ID;
 const CLIENT_SECRET = process.env.KEYCLOAK_CLIENT_SECRET;
 const REDIRECT_URI = 'https://vpn.elias-osarumwense.com/login/callback';
 
-// Session-Cookie-Verwaltung aktivieren
 app.use(session({
-    secret: process.env.SESSION_SECRET, // Nutzt dein neu generiertes Terminal-Secret
+    // FIX 2: Fallback-String verhindert einen HTTP 500 Absturz, falls SESSION_SECRET mal temporär fehlt
+    secret: process.env.SESSION_SECRET || 'headpilot-vienna-fallback-secret-string', 
     resave: false,
     saveUninitialized: false,
     cookie: { 
-        secure: true, // Muss true sein, da Caddy HTTPS erzwingt
-        maxAge: 60 * 60 * 1000 // Sitzung bleibt 1 Stunde aktiv
+        secure: true, 
+        maxAge: 60 * 60 * 1000 
     }
 }));
 
