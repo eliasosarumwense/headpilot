@@ -282,6 +282,127 @@ app.get('/api/routes', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+const { Client } = require('ssh2');
+
+// docker ps -a listet ALLE Container (auch gestoppte). {{json .}} lässt Docker selbst
+// sauber escaptes JSON pro Zeile ausgeben, statt es uns per Hand (fehleranfällig) zusammenzubauen.
+const DOCKER_PS_CMD = "docker ps -a --format '{{json .}}'";
+
+// Führt einen Befehl über eine bestehende SSH-Verbindung aus und sammelt stdout/stderr/exit-code.
+// Optional kann etwas auf stdin geschrieben werden (z.B. das Passwort für "sudo -S").
+function execOverSsh(conn, cmd, stdinData) {
+    return new Promise((resolve, reject) => {
+        conn.exec(cmd, (err, stream) => {
+            if (err) return reject(err);
+
+            let stdout = '';
+            let stderr = '';
+            stream.on('data', (chunk) => { stdout += chunk; });
+            stream.stderr.on('data', (chunk) => { stderr += chunk; });
+            stream.on('close', (code) => resolve({ code, stdout, stderr }));
+
+            if (stdinData) stream.write(stdinData);
+            stream.end();
+        });
+    });
+}
+
+// Typische Meldung, wenn der SSH-User zwar eingeloggt ist, aber nicht auf den Docker-Socket darf
+// (sehr häufig auf frisch aufgesetzten Servern, wenn der User nicht in der "docker"-Gruppe ist)
+function isPermissionDenied(stderr) {
+    return /permission denied|dial unix.*docker\.sock/i.test(stderr);
+}
+
+function isDockerNotFound(stderr) {
+    return /command not found|no such file/i.test(stderr);
+}
+
+// Route: SSH Login und Docker Container abfragen
+app.post('/api/nodes/ssh-docker', (req, res) => {
+    const { ip, username, password } = req.body;
+
+    if (!ip || !username || !password) {
+        return res.status(400).json({ error: 'IP, Benutzername und Passwort werden benötigt.' });
+    }
+
+    // Verhindert "Cannot set headers after they are sent", falls 'error' nach 'ready' feuert
+    let responded = false;
+    const respond = (status, body) => {
+        if (responded) return;
+        responded = true;
+        res.status(status).json(body);
+    };
+
+    const conn = new Client();
+
+    conn.on('ready', async () => {
+        try {
+            let result = await execOverSsh(conn, DOCKER_PS_CMD);
+
+            // Kein Zugriff auf den Docker-Socket? Automatisch mit sudo erneut versuchen
+            // (Passwort wird direkt über stdin an "sudo -S" übergeben, landet also nicht im Prozess-Log).
+            if (result.code !== 0 && isPermissionDenied(result.stderr)) {
+                result = await execOverSsh(conn, `sudo -S -p '' ${DOCKER_PS_CMD}`, password + '\n');
+            }
+
+            conn.end();
+
+            // Kein Output UND ein Fehler-Code -> Docker ist vermutlich nicht installiert
+            // oder nicht im PATH der (nicht-interaktiven) SSH-Session (häufig bei NAS-Systemen)
+            if (result.code !== 0 && result.stdout.trim() === '') {
+                console.error(`Docker-Befehl auf ${ip} fehlgeschlagen (Exit ${result.code}): ${result.stderr.trim()}`);
+                return respond(500, {
+                    error: isDockerNotFound(result.stderr)
+                        ? 'Docker wurde auf diesem Gerät nicht gefunden (evtl. nicht installiert).'
+                        : isPermissionDenied(result.stderr)
+                            ? 'Kein Zugriff auf den Docker-Dienst (Benutzer weder in der "docker"-Gruppe, noch per sudo berechtigt).'
+                            : `Docker-Befehl fehlgeschlagen: ${result.stderr.trim() || 'Unbekannter Fehler'}`
+                });
+            }
+
+            try {
+                // Docker gibt pro Zeile ein eigenes JSON-Objekt aus
+                const containers = result.stdout.trim().split('\n')
+                    .filter(line => line.length > 0)
+                    .map(line => JSON.parse(line))
+                    .map(c => ({ name: c.Names, state: c.State, status: c.Status }));
+
+                respond(200, { containers });
+            } catch (parseError) {
+                console.error('Docker-Ausgabe konnte nicht geparst werden:', result.stdout);
+                respond(500, { error: 'Konnte Docker-Daten nicht verarbeiten.' });
+            }
+        } catch (execErr) {
+            conn.end();
+            respond(500, { error: 'Docker-Befehl konnte nicht ausgeführt werden.' });
+        }
+    }).on('error', (err) => {
+        // Genauere Fehlerursache loggen, statt sie hinter einer generischen Meldung zu verstecken
+        console.error(`SSH-Fehler bei ${username}@${ip}: [${err.level || err.code || 'unknown'}] ${err.message}`);
+
+        let message = `SSH-Verbindung fehlgeschlagen: ${err.message}`;
+        if (err.level === 'client-authentication') {
+            message = 'SSH Login fehlgeschlagen: Benutzername oder Passwort falsch (oder Passwort-Login für diesen User deaktiviert).';
+        } else if (err.code === 'ETIMEDOUT' || err.level === 'client-timeout') {
+            message = 'Zeitüberschreitung: Gerät über das VPN nicht erreichbar oder Port 22 geschlossen.';
+        } else if (err.code === 'ECONNREFUSED') {
+            message = 'Verbindung abgelehnt: Auf Port 22 läuft kein SSH-Dienst (ist SSH auf dem Gerät aktiviert?).';
+        } else if (err.code === 'EHOSTUNREACH' || err.code === 'ENETUNREACH') {
+            message = 'Gerät über das VPN nicht erreichbar.';
+        } else if (err.level === 'client-dns' || err.code === 'ENOTFOUND') {
+            message = 'Host konnte nicht aufgelöst werden.';
+        }
+
+        respond(401, { error: message });
+    }).connect({
+        host: ip,
+        port: 22,
+        username: username,
+        password: password,
+        readyTimeout: 8000 // Etwas großzügiger, da VPN-Pfade mehr Latenz haben können
+    });
+});
+
 // Server starten
 app.listen(PORT, () => {
     console.log(`🚀 Headpilot Backend läuft gesichert auf http://localhost:${PORT}`);

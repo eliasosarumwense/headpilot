@@ -1,17 +1,16 @@
 <h1>Pre-Auth Keys (Schlüssel)</h1>
 <p class="subtitle">Generiere Einladungs-Schlüssel, um neue Geräte in dein VPN aufzunehmen.</p>
 
-<div class="action-bar" style="align-items: center; background: #ffffff; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-    
-    <select id="key-user-select" onchange="fetchKeys()" style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; flex: 1; max-width: 250px;">
+<div class="action-bar">
+    <select id="key-user-select" onchange="fetchKeys()">
         <option value="">Benutzer laden...</option>
     </select>
-    
-    <label style="margin-left: 15px; color: #333; font-weight: bold;">
+
+    <label>
         <input type="checkbox" id="key-reusable"> Reusable (Mehrfach nutzbar)
     </label>
 
-    <button class="btn-primary" style="margin-left: auto;" onclick="createKey()">+ Key generieren</button>
+    <button class="btn-primary" onclick="createKey()">+ Key generieren</button>
 </div>
 
 <div class="card">

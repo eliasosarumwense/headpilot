@@ -18,7 +18,7 @@ jobs:
       - name: Deploy to VPS via SSH
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: ${{ secrets.VPS_HOST }}      # Mit Punkt statt Doppelpunkt
+          host: ${{ secrets.VPS_HOST }} 
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22

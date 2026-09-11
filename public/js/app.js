@@ -1,65 +1,149 @@
 // --- DYNAMISCHER ROUTER ---
+const viewCache = {}; // hält bereits geladene View-Schnipsel, damit ein erneuter Wechsel ohne Netzwerk-Roundtrip auskommt
+let viewToken = 0; // verhindert, dass eine langsame alte Anfrage eine neuere Ansicht überschreibt
+
 async function loadView(viewName) {
+    const requestId = ++viewToken;
+    const content = document.getElementById('app-content');
+
     try {
         // 1. Markierungen in der Sidebar aktualisieren
         document.querySelectorAll('.nav-links a').forEach(el => el.classList.remove('active'));
         document.getElementById(`nav-${viewName}`).classList.add('active');
 
-        // 2. Das HTML-Schnipsel aus dem views-Ordner laden
-        const response = await fetch(`/views/${viewName}.html`);
-        if (!response.ok) throw new Error("View nicht gefunden");
-        const html = await response.text();
+        // 2. Aktuellen Inhalt sanft ausblenden, bevor er ersetzt wird
+        content.classList.add('is-switching');
+        await new Promise(resolve => setTimeout(resolve, 110));
+        if (requestId !== viewToken) return; // Nutzer hat inzwischen weitergeklickt
 
-        // 3. Das HTML in den Hauptbereich einfügen
-        document.getElementById('app-content').innerHTML = html;
+        // 3. Das HTML-Schnipsel laden (aus Cache, falls schon einmal besucht)
+        let html = viewCache[viewName];
+        if (!html) {
+            const response = await fetch(`/views/${viewName}.html`);
+            if (!response.ok) throw new Error("View nicht gefunden");
+            html = await response.text();
+            viewCache[viewName] = html;
+        }
+        if (requestId !== viewToken) return;
 
-        // 4. Die passenden API-Daten laden
+        // 4. Das HTML einfügen und wieder einblenden
+        content.innerHTML = html;
+        content.classList.remove('is-switching');
+
+        // 5. Die passenden API-Daten laden
         if (viewName === 'dashboard') fetchDashboardStats();
         if (viewName === 'nodes') fetchNodes();
+        if (viewName === 'docker') fetchDockerNodes();
         if (viewName === 'users') fetchUsers();
-        if (viewName === 'keys') initKeysView(); // <-- DAS IST NEU
+        if (viewName === 'keys') initKeysView();
 
     } catch (error) {
-        document.getElementById('app-content').innerHTML = `<h1>Fehler</h1><p>Konnte Ansicht nicht laden.</p>`;
+        if (requestId !== viewToken) return;
+        content.innerHTML = `<h1>Fehler</h1><p>Konnte Ansicht nicht laden.</p>`;
+        content.classList.remove('is-switching');
     }
 }
 
 // --- API LOGIK: NODES ---
+
+// Escaped einen String fürs sichere Einbetten in einfache JS-Anführungszeichen (onclick="...")
+function jsStr(str) {
+    return String(str ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 async function fetchNodes() {
+    const grid = document.getElementById('nodes-grid');
     try {
         const res = await fetch('/api/nodes');
         const data = await res.json();
-        const tbody = document.getElementById('nodes-table-body');
-        tbody.innerHTML = '';
-        
+        grid.innerHTML = '';
+
         if (data.nodes && data.nodes.length > 0) {
             data.nodes.forEach(n => {
-                const ips = n.ipAddresses ? n.ipAddresses.join(', ') : '-';
+                const ipList = n.ipAddresses || [];
+                const ipChips = ipList.length > 0
+                    ? ipList.map(ip => `<span class="ip-chip">${escapeHtml(ip)}</span>`).join('')
+                    : '<span class="ip-chip">-</span>';
                 const lastSeen = new Date(n.lastSeen).toLocaleString();
-                
+
                 // Wir nehmen den echten, gesetzten Namen
                 const name = n.givenName || n.name;
-                
-                // Zeigt visuell an, ob das Gerät online ist
-                const isOnline = n.online ? '🟢' : '🔴';
-                
-                tbody.innerHTML += `<tr>
-                    <td>${n.id}</td>
-                    <td><strong>${isOnline} ${name}</strong><br><small style="color: #6c757d;">Besitzer: ${n.user.name}</small></td>
-                    <td><code>${ips}</code></td>
-                    <td>${lastSeen}</td>
-                    <td class="action-cell">
-                        <button class="btn-warning" onclick="renameNode(${n.id}, '${name}')">Umbenennen</button>
-                        <button class="btn-danger" style="background: #e67e22;" onclick="expireNode(${n.id}, '${name}')">Sitzung beenden</button>
-                        <button class="btn-danger" onclick="deleteNode(${n.id}, '${name}')">Löschen</button>
-                    </td>
-                </tr>`;
+                const owner = n.user?.name || '-';
+                const statusClass = n.online ? 'online' : '';
+                const statusLabel = n.online ? 'Online' : 'Offline';
+
+                grid.innerHTML += `
+                <div class="node-card">
+                    <div class="node-card-header">
+                        <span class="status-dot ${statusClass}" title="${statusLabel}"></span>
+                        <div>
+                            <div class="node-name">${escapeHtml(name)}</div>
+                            <div class="node-owner">Besitzer: ${escapeHtml(owner)}</div>
+                        </div>
+                    </div>
+
+                    <div class="node-meta">
+                        <div class="ip-chips">${ipChips}</div>
+                        <div>Letzter Kontakt: ${lastSeen}</div>
+                    </div>
+
+                    <div class="node-card-footer">
+                        <button class="btn" onclick="renameNode(${n.id}, '${jsStr(name)}')">Umbenennen</button>
+                        <button class="btn" onclick="expireNode(${n.id}, '${jsStr(name)}')">Sitzung beenden</button>
+                        <button class="btn btn-danger" onclick="deleteNode(${n.id}, '${jsStr(name)}')">Löschen</button>
+                    </div>
+                </div>`;
             });
         } else {
-            tbody.innerHTML = '<tr><td colspan="5">Keine Geräte registriert.</td></tr>';
+            grid.innerHTML = '<p>Keine Geräte registriert.</p>';
         }
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" style="color:red;">Fehler beim Laden!</td></tr>';
+        grid.innerHTML = '<p style="color:#b91c1c;">Fehler beim Laden!</p>';
+    }
+}
+
+// --- API LOGIK: DOCKER DIENSTE ---
+
+async function fetchDockerNodes() {
+    const grid = document.getElementById('docker-grid');
+    try {
+        const res = await fetch('/api/nodes');
+        const data = await res.json();
+        grid.innerHTML = '';
+
+        if (data.nodes && data.nodes.length > 0) {
+            data.nodes.forEach(n => {
+                const ipList = n.ipAddresses || [];
+                const firstIp = ipList[0] || '';
+                const name = n.givenName || n.name;
+                const owner = n.user?.name || '-';
+                const statusClass = n.online ? 'online' : '';
+                const statusLabel = n.online ? 'Online' : 'Offline';
+
+                grid.innerHTML += `
+                <div class="node-card">
+                    <div class="node-card-header">
+                        <span class="status-dot ${statusClass}" title="${statusLabel}"></span>
+                        <div>
+                            <div class="node-name">${escapeHtml(name)}</div>
+                            <div class="node-owner">${escapeHtml(owner)} · ${escapeHtml(firstIp || '-')}</div>
+                        </div>
+                    </div>
+
+                    <div class="node-docker-section">
+                        <div class="node-docker-header">
+                            <span>Docker Dienste</span>
+                            <button class="btn" onclick="openSshModal('${jsStr(firstIp)}', ${n.id}, '${jsStr(name)}')">Scannen</button>
+                        </div>
+                        <div id="docker-services-${n.id}" class="docker-services">Noch nicht gescannt.</div>
+                    </div>
+                </div>`;
+            });
+        } else {
+            grid.innerHTML = '<p>Keine Geräte registriert.</p>';
+        }
+    } catch (e) {
+        grid.innerHTML = '<p style="color:#b91c1c;">Fehler beim Laden!</p>';
     }
 }
 
@@ -83,7 +167,7 @@ async function renameNode(id, oldName) {
         }
         fetchNodes(); // Tabelle neu laden
     } catch (e) {
-        alert("🚨 Fehler: " + e.message);
+        alert("Fehler: " + e.message);
     }
 }
 
@@ -99,7 +183,7 @@ async function expireNode(id, name) {
         }
         fetchNodes();
     } catch (e) {
-        alert("🚨 Fehler: " + e.message);
+        alert("Fehler: " + e.message);
     }
 }
 
@@ -115,7 +199,7 @@ async function deleteNode(id, name) {
         }
         fetchNodes();
     } catch (e) {
-        alert("🚨 Echter Fehlerbericht vom Server:\n\n" + e.message);
+        alert("Fehler vom Server:\n\n" + e.message);
     }
 }
 
@@ -133,13 +217,13 @@ async function fetchUsers() {
                     <td><strong>${u.name}</strong></td>
                     <td>${new Date(u.createdAt).toLocaleString()}</td>
                     <td class="action-cell">
-                        <button class="btn-warning" onclick="renameUser(${u.id}, '${u.name}')">Umbenennen</button>
-                        <button class="btn-danger" onclick="deleteUser(${u.id}, '${u.name}')">Löschen</button>
+                        <button class="btn" onclick="renameUser(${u.id}, '${u.name}')">Umbenennen</button>
+                        <button class="btn btn-danger" onclick="deleteUser(${u.id}, '${u.name}')">Löschen</button>
                     </td>
                 </tr>`;
             });
         } else tbody.innerHTML = '<tr><td colspan="4">Keine Benutzer.</td></tr>';
-    } catch (e) { tbody.innerHTML = '<tr><td colspan="4" style="color:red;">Fehler beim Laden!</td></tr>'; }
+    } catch (e) { tbody.innerHTML = '<tr><td colspan="4" style="color:#b91c1c;">Fehler beim Laden!</td></tr>'; }
 }
 
 async function createUser() {
@@ -160,7 +244,7 @@ async function renameUser(id, oldName) {
         const res = await fetch(`/api/users/${id}/rename/${newName.trim()}`, { method: 'POST' });
         if (!res.ok) throw new Error("Fehler beim Umbenennen");
         fetchUsers();
-    } catch (e) { alert("🚨 Fehler: " + e.message); }
+    } catch (e) { alert("Fehler: " + e.message); }
 }
 
 // FIX: Die Funktion nimmt jetzt ID und Name an
@@ -175,7 +259,7 @@ async function deleteUser(id, name) {
 
         fetchUsers();
     } catch (e) {
-        alert("🚨 Echter Fehlerbericht vom Server:\n\n" + e.message);
+        alert("Fehler vom Server:\n\n" + e.message);
     }
 }
 
@@ -269,7 +353,6 @@ async function fetchDashboardStats() {
         document.getElementById('stat-keys').innerText = activeKeysCount;
         const keysUsersArr = Array.from(usersWithKeys);
         document.getElementById('detail-keys').innerText = activeKeysCount > 0 ? `Ausstehend für: ${formatList(keysUsersArr)}` : "Keine offenen Keys";
-        if (activeKeysCount > 0) document.getElementById('stat-keys').classList.add('color-warning');
 
     } catch (e) {
         console.error("Fehler beim Laden", e);
@@ -335,14 +418,14 @@ async function fetchKeys() {
                     <td><code>${k.key}</code></td>
                     <td>${k.reusable ? 'Ja' : 'Nein'}</td>
                     <td>${new Date(k.expiration).toLocaleString()}</td>
-                    <td><button class="btn-danger" onclick="expireKey('${userName}', '${k.key}')">Ablaufen lassen</button></td>
+                    <td><button class="btn btn-danger" onclick="expireKey('${userName}', '${k.key}')">Ablaufen lassen</button></td>
                 </tr>`;
             });
         } else {
             tbody.innerHTML = '<tr><td colspan="4">Keine Keys auf dem Server gefunden.</td></tr>';
         }
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="4" style="color:red;">Fehler beim Laden!</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="color:#b91c1c;">Fehler beim Laden!</td></tr>';
     }
 }
 
@@ -379,7 +462,7 @@ async function createKey() {
         alert(`WICHTIG! Neuer Key generiert:\n\nKopiere ihn jetzt. Er wird danach nie wieder komplett angezeigt!\n\n${data.preAuthKey.key}`);
         fetchKeys();
     } catch (e) {
-        alert("🚨 Fehlerbericht vom Server:\n\n" + e.message);
+        alert("Fehlerbericht vom Server:\n\n" + e.message);
     }
 }
 
@@ -405,8 +488,113 @@ async function expireKey(userName, key) {
         }, 500);
 
     } catch (e) {
-        alert("🚨 Fehler beim Deaktivieren: " + e.message);
+        alert("Fehler beim Deaktivieren: " + e.message);
     }
 }
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str ?? '';
+    return div.innerHTML;
+}
+
+// --- SSH-MODAL (Docker-Scan) ---
+
+let sshModalContext = null; // { ip, nodeId, nodeName }
+
+function openSshModal(ip, nodeId, nodeName) {
+    if (!ip || ip === '-') return alert('Dieses Gerät hat keine gültige IP-Adresse.');
+
+    sshModalContext = { ip, nodeId, nodeName };
+    document.getElementById('ssh-modal-subtitle').textContent = `${nodeName} (${ip})`;
+    document.getElementById('ssh-username').value = 'root';
+    document.getElementById('ssh-password').value = '';
+
+    const overlay = document.getElementById('ssh-modal-overlay');
+    overlay.hidden = false;
+    document.getElementById('ssh-username').focus();
+}
+
+function closeSshModal() {
+    document.getElementById('ssh-modal-overlay').hidden = true;
+    sshModalContext = null;
+}
+
+document.addEventListener('submit', (e) => {
+    if (e.target.id !== 'ssh-form') return;
+    e.preventDefault();
+
+    const ctx = sshModalContext;
+    if (!ctx) return;
+
+    const username = document.getElementById('ssh-username').value.trim();
+    const password = document.getElementById('ssh-password').value;
+    closeSshModal();
+
+    if (username && password) scanDockerSSH(ctx.ip, ctx.nodeId, ctx.nodeName, username, password);
+});
+
+document.addEventListener('click', (e) => {
+    if (e.target.id === 'ssh-modal-overlay') closeSshModal();
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSshModal();
+});
+
+// --- DOCKER-SCAN ÜBER SSH ---
+
+async function scanDockerSSH(ip, nodeId, nodeName, username, password) {
+    const containerDiv = document.getElementById(`docker-services-${nodeId}`);
+    if (!containerDiv) return;
+
+    containerDiv.innerHTML = `<span class="docker-loading">Verbinde über SSH mit ${escapeHtml(nodeName)}...</span>`;
+
+    try {
+        const res = await fetch('/api/nodes/ssh-docker', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip, username, password })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) throw new Error(data.error || 'Scan fehlgeschlagen.');
+
+        renderDockerContainers(containerDiv, data.containers || []);
+
+    } catch (e) {
+        containerDiv.innerHTML = `<span class="docker-error">${escapeHtml(e.message)}</span>`;
+    }
+}
+
+// Zeigt laufende Dienste zuerst an, mit einer kurzen Zusammenfassung oben
+function renderDockerContainers(containerDiv, containers) {
+    if (containers.length === 0) {
+        containerDiv.innerHTML = '<span class="docker-empty">Keine Docker-Container gefunden.</span>';
+        return;
+    }
+
+    const sorted = [...containers].sort((a, b) => {
+        const runningRank = (c) => (c.state === 'running' ? 0 : 1);
+        return runningRank(a) - runningRank(b) || String(a.name).localeCompare(String(b.name));
+    });
+
+    const runningCount = sorted.filter(c => c.state === 'running').length;
+    const summary = `${runningCount} von ${sorted.length} Diensten laufen`;
+
+    const badges = sorted.map(c => {
+        const isRunning = c.state === 'running';
+        const safeName = escapeHtml(c.name);
+        const safeStatus = escapeHtml(c.status);
+        return `<span class="docker-badge" title="${safeStatus}"><span class="docker-badge-dot ${isRunning ? 'running' : ''}"></span>${safeName}</span>`;
+    }).join('');
+
+    containerDiv.innerHTML = `
+        <div class="docker-summary">${summary}</div>
+        <div class="docker-badges">${badges}</div>
+    `;
+}
+
 // Wenn das Skript geladen ist, starte mit der "nodes" Ansicht
 window.onload = () => loadView('dashboard');
