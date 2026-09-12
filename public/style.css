@@ -831,3 +831,28 @@ code {
     color: var(--text-muted);
     font-size: 0.9rem;
 }
+
+/* =========================================================================
+   AUDIT-LOG-FEED (Startseite): klassischer, dunkler Log-/Terminal-Look -
+   bewusst unabhängig vom Rest der (hellen) App, genau wie man es von Logs kennt.
+   ========================================================================= */
+.audit-log-console {
+    background: #0b0b0c;
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    max-height: 260px;
+    overflow-y: auto;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 0.78rem;
+    line-height: 1.7;
+    color: #d4d4d8;
+}
+
+.audit-log-line {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.audit-log-time {
+    color: #71717a;
+}

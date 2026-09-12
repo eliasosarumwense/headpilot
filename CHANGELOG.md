@@ -110,7 +110,7 @@ Protokolliert sicherheitsrelevante Aktionen (wer hat was wann gemacht) in Postgr
 
 **Instrumentierte Routen** ([server.js](server.js)): `LOGIN_SUCCESS` (OIDC-Callback), `NODE_RENAME`, `NODE_DELETE`, `USER_CREATE`, `USER_DELETE`, `PREAUTHKEY_CREATE`, `ROUTE_APPROVE`, `MONITOR_CREATE`, `MONITOR_EDIT`, `MONITOR_DELETE` - jeweils erst geloggt, nachdem die eigentliche Aktion bei Headscale/Kuma erfolgreich war.
 
-**Frontend**: [audit.html](public/views/audit.html) + [app.js](public/js/app.js) - klassische Tabelle (Zeitstempel/Actor/Action/Target) mit "Neu laden"-Button, kein Polling.
+**Frontend (überarbeitet):** Ursprünglich als eigener "Audit Log"-Reiter mit Tabelle gebaut, dann auf Wunsch wieder entfernt und stattdessen als Log-Feed direkt auf der Startseite ergänzt - eine breite Kachel im Dashboard-Grid mit dunkler, monospace Log-Konsole (`.audit-log-console` in [style.css](public/style.css), Zeilen im Format `[Zeitstempel] actor  ACTION  target`), zeigt die letzten 10 Einträge. Kein separater Nav-Eintrag mehr.
 
 **Nicht live testbar:** Anders als bei Headscale/Kuma lief hier keine echte Postgres-Instanz zum Gegentesten zur Verfügung (Docker-Container läuft nur auf dem VPS) - SQL wurde sorgfältig geprüft, aber die tatsächliche DB-Interaktion muss auf dem VPS verifiziert werden. Auf dem VPS in der dortigen `.env`: `DATABASE_URL=postgres://<user>:<passwort>@127.0.0.1:5432/headpilot` (Schema `headpilot`, Tabelle `audit_log` muss bereits existieren).
 
@@ -122,12 +122,12 @@ Protokolliert sicherheitsrelevante Aktionen (wer hat was wann gemacht) in Postgr
 | `audit.js` | **Neu** – Postgres-Audit-Log (pg-Pool, logAudit/getAuditLog) |
 | `sshVault.js` | **Neu** – verschlüsselte SSH-Zugangsdaten-Speicherung |
 | `public/style.css` | Komplett überarbeitet (minimalistisch), neue Sektionen für Docker/Status/Ping/Modal/Routes, `--warning`-Variable |
-| `public/js/app.js` | View-Router mit Cache/Transitions, Docker-Scan-UI, Ping, Kuma-Status-UI inkl. CRUD-Modal, Keys-Grid-Redesign + ID-Fix, Subnet-Routes-UI, Audit-Log-Tabelle |
-| `public/index.html` | Neue Nav-Einträge (Docker, Status, Subnet Routes, Audit Log), SSH- und Monitor-Modal |
+| `public/js/app.js` | View-Router mit Cache/Transitions, Docker-Scan-UI, Ping, Kuma-Status-UI inkl. CRUD-Modal, Keys-Grid-Redesign + ID-Fix, Subnet-Routes-UI, Audit-Log-Feed auf der Startseite |
+| `public/index.html` | Neue Nav-Einträge (Docker, Status, Subnet Routes), SSH- und Monitor-Modal |
 | `public/views/docker.html` | **Neu** |
 | `public/views/status.html` | **Neu** |
 | `public/views/routes.html` | **Neu** |
-| `public/views/audit.html` | **Neu** |
+| `public/views/dashboard.html` | Neue Audit-Log-Feed-Kachel |
 | `public/views/keys.html` | Tabelle → Karten-Grid |
 | `.env.example` | **Neu** – dokumentiert alle benötigten Umgebungsvariablen |
 | `.gitignore` | `/data/` (SSH-Vault) ergänzt |

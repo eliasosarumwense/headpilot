@@ -45,6 +45,11 @@
 
     /* Einziger Farbakzent: kritische Warnung bei bald ablaufenden Sitzungen/Keys */
     .color-danger { color: var(--danger) !important; }
+
+    /* Log-Feed-Kachel: spannt die volle Breite des Grids statt einer Spalte */
+    .audit-feed-card {
+        grid-column: 1 / -1;
+    }
 </style>
 
 <div class="dashboard-grid">
@@ -82,5 +87,10 @@
         <h3>Aktive Routen</h3>
         <div class="stat-number" id="stat-routes">-</div>
         <div class="stat-details" id="detail-routes">Lade...</div>
+    </div>
+
+    <div class="stat-card audit-feed-card">
+        <h3>Letzte Aktivität</h3>
+        <div class="audit-log-console" id="dashboard-audit-log">Lade...</div>
     </div>
 </div>

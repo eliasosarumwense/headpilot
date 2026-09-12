@@ -31,14 +31,13 @@ async function loadView(viewName) {
         content.classList.remove('is-switching');
 
         // 5. Die passenden API-Daten laden
-        if (viewName === 'dashboard') fetchDashboardStats();
+        if (viewName === 'dashboard') { fetchDashboardStats(); fetchDashboardAuditLog(); }
         if (viewName === 'nodes') fetchNodes();
         if (viewName === 'docker') fetchDockerNodes();
         if (viewName === 'status') initStatusView();
         if (viewName === 'users') fetchUsers();
         if (viewName === 'keys') initKeysView();
         if (viewName === 'routes') fetchRoutes();
-        if (viewName === 'audit') fetchAuditLog();
 
     } catch (error) {
         if (requestId !== viewToken) return;
@@ -854,40 +853,38 @@ async function disableRoute(nodeId, route) {
 
 // --- API LOGIK: AUDIT LOG ---
 
-async function fetchAuditLog() {
-    const tbody = document.getElementById('audit-table-body');
-    if (!tbody) return;
-    tbody.innerHTML = '<tr><td colspan="4">Lade...</td></tr>';
+// Zeigt die letzten Audit-Log-Einträge als kompakten Log-Feed auf der Startseite an -
+// klassischer Monospace-"Log"-Look statt einer normalen Tabelle.
+async function fetchDashboardAuditLog() {
+    const container = document.getElementById('dashboard-audit-log');
+    if (!container) return;
 
     try {
-        const res = await fetch('/api/audit?limit=50&offset=0');
+        const res = await fetch('/api/audit?limit=10&offset=0');
         const data = await res.json();
 
         if (!data.configured) {
-            tbody.innerHTML = '<tr><td colspan="4">Audit-Log ist in dieser Umgebung nicht eingerichtet.</td></tr>';
+            container.textContent = 'Audit-Log ist in dieser Umgebung nicht eingerichtet.';
             return;
         }
         if (!data.available) {
-            tbody.innerHTML = '<tr><td colspan="4" style="color:#b91c1c;">Audit-Log-Datenbank momentan nicht erreichbar.</td></tr>';
+            container.textContent = 'Audit-Log-Datenbank momentan nicht erreichbar.';
             return;
         }
 
         const entries = data.entries || [];
         if (entries.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4">Noch keine Einträge vorhanden.</td></tr>';
+            container.textContent = 'Noch keine Einträge vorhanden.';
             return;
         }
 
-        tbody.innerHTML = entries.map(e => `
-            <tr>
-                <td>${new Date(e.timestamp).toLocaleString()}</td>
-                <td>${escapeHtml(e.actor)}</td>
-                <td>${escapeHtml(e.action)}</td>
-                <td>${escapeHtml(e.target ?? '-')}</td>
-            </tr>
-        `).join('');
+        container.innerHTML = entries.map(e => {
+            const time = new Date(e.timestamp).toLocaleString('de-DE');
+            const target = e.target ? ` ${e.target}` : '';
+            return `<div class="audit-log-line"><span class="audit-log-time">[${escapeHtml(time)}]</span> ${escapeHtml(e.actor)}  ${escapeHtml(e.action)}${escapeHtml(target)}</div>`;
+        }).join('');
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="4" style="color:#b91c1c;">Fehler beim Laden!</td></tr>';
+        container.textContent = 'Fehler beim Laden.';
     }
 }
 
