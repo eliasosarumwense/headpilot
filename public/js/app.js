@@ -105,46 +105,96 @@ async function fetchNodes() {
 // --- API LOGIK: DOCKER DIENSTE ---
 
 async function fetchDockerNodes() {
-    const grid = document.getElementById('docker-grid');
+    const list = document.getElementById('docker-list');
     try {
         const res = await fetch('/api/nodes');
         const data = await res.json();
-        grid.innerHTML = '';
 
         if (data.nodes && data.nodes.length > 0) {
-            data.nodes.forEach(n => {
+            // Erst alle Karten als Strings sammeln und EINMAL einfügen, statt bei jeder
+            // Node per "+=" das komplette Grid neu zu parsen/aufzubauen.
+            const cardsHtml = data.nodes.map(n => {
                 const ipList = n.ipAddresses || [];
                 const firstIp = ipList[0] || '';
                 const name = n.givenName || n.name;
-                const owner = n.user?.name || '-';
                 const statusClass = n.online ? 'online' : '';
                 const statusLabel = n.online ? 'Online' : 'Offline';
 
-                grid.innerHTML += `
-                <div class="node-card">
-                    <div class="node-card-header">
-                        <span class="status-dot ${statusClass}" title="${statusLabel}"></span>
-                        <div>
-                            <div class="node-name">${escapeHtml(name)}</div>
-                            <div class="node-owner">${escapeHtml(owner)} · ${escapeHtml(firstIp || '-')}</div>
+                return `
+                <div class="docker-node">
+                    <div class="docker-node-header">
+                        <div class="docker-node-identity">
+                            <span class="status-dot ${statusClass}" title="${statusLabel}"></span>
+                            <div>
+                                <div class="docker-node-name">${escapeHtml(name)}</div>
+                                <div class="docker-node-ip">${escapeHtml(firstIp || '-')}</div>
+                            </div>
+                        </div>
+                        <div class="docker-node-actions" id="docker-actions-${n.id}">
+                            <span class="docker-node-summary" id="docker-summary-${n.id}">Noch nicht gescannt</span>
+                            <button class="btn" onclick="openSshModal('${jsStr(firstIp)}', '${jsStr(n.id)}', '${jsStr(name)}')">Scannen</button>
                         </div>
                     </div>
-
-                    <div class="node-docker-section">
-                        <div class="node-docker-header">
-                            <span>Docker Dienste</span>
-                            <button class="btn" onclick="openSshModal('${jsStr(firstIp)}', ${n.id}, '${jsStr(name)}')">Scannen</button>
-                        </div>
-                        <div id="docker-services-${n.id}" class="docker-services">Noch nicht gescannt.</div>
+                    <div class="docker-node-body" id="docker-services-${n.id}">
+                        <p class="docker-state-msg">Noch nicht gescannt. Klicke auf "Scannen" und melde dich per SSH an.</p>
                     </div>
                 </div>`;
             });
+
+            list.innerHTML = cardsHtml.join('');
+
+            // Prüft je Node im Hintergrund, ob schon gespeicherte Zugangsdaten vorliegen,
+            // und passt die Buttons entsprechend an (kein Modal mehr nötig)
+            data.nodes.forEach(n => {
+                const firstIp = (n.ipAddresses || [])[0] || '';
+                refreshNodeActions(n.id, firstIp, n.givenName || n.name);
+            });
         } else {
-            grid.innerHTML = '<p>Keine Geräte registriert.</p>';
+            list.innerHTML = '<p>Keine Geräte registriert.</p>';
         }
     } catch (e) {
-        grid.innerHTML = '<p style="color:#b91c1c;">Fehler beim Laden!</p>';
+        list.innerHTML = '<p style="color:#b91c1c;">Fehler beim Laden!</p>';
     }
+}
+
+// Zeigt je nachdem, ob für die Node bereits sicher gespeicherte SSH-Zugangsdaten
+// existieren, entweder einen direkten "Scannen"-Button oder einen, der erst das Login-Modal öffnet
+async function refreshNodeActions(nodeId, ip, name) {
+    const actionsDiv = document.getElementById(`docker-actions-${nodeId}`);
+    if (!actionsDiv) return;
+
+    const summaryHtml = `<span class="docker-node-summary" id="docker-summary-${nodeId}">Noch nicht gescannt</span>`;
+
+    try {
+        // cache: 'no-store' zusätzlich zum Cache-Control-Header vom Server - sonst könnte der
+        // Browser nach dem Speichern noch die alte "saved: false"-Antwort von vorher zeigen
+        const res = await fetch(`/api/nodes/${nodeId}/ssh-credentials`, { cache: 'no-store' });
+        const info = await res.json();
+
+        actionsDiv.innerHTML = info.saved
+            ? `${summaryHtml}
+               <button class="btn" onclick="scanDockerSSH('${jsStr(ip)}', '${jsStr(nodeId)}', '${jsStr(name)}')">Neu scannen</button>
+               <button class="btn" title="Gespeicherte Zugangsdaten für '${escapeHtml(info.username)}' entfernen" onclick="forgetSshCredentials('${jsStr(nodeId)}', '${jsStr(ip)}', '${jsStr(name)}')">Zugang vergessen</button>`
+            : `${summaryHtml}
+               <button class="btn" onclick="openSshModal('${jsStr(ip)}', '${jsStr(nodeId)}', '${jsStr(name)}')">Scannen</button>`;
+
+        // Für Geräte mit gespeicherten Zugangsdaten direkt automatisch laden,
+        // ohne dass erst auf "Scannen" geklickt werden muss
+        if (info.saved) scanDockerSSH(ip, nodeId, name);
+    } catch (e) {
+        // Bei Fehler bleibt einfach der Standard-Button (mit Modal) stehen
+    }
+}
+
+// Entfernt gespeicherte Zugangsdaten wieder (nach Rückfrage) und schaltet den Button zurück aufs Modal
+async function forgetSshCredentials(nodeId, ip, name) {
+    if (!confirm('Gespeicherte SSH-Zugangsdaten für dieses Gerät wirklich entfernen?')) return;
+    try {
+        await fetch(`/api/nodes/${nodeId}/ssh-credentials`, { method: 'DELETE' });
+    } catch (e) {
+        // Ignorieren - refreshNodeActions zeigt danach ohnehin den aktuellen Stand
+    }
+    refreshNodeActions(nodeId, ip, name);
 }
 
 // 1. Gerät umbenennen
@@ -509,6 +559,7 @@ function openSshModal(ip, nodeId, nodeName) {
     document.getElementById('ssh-modal-subtitle').textContent = `${nodeName} (${ip})`;
     document.getElementById('ssh-username').value = 'root';
     document.getElementById('ssh-password').value = '';
+    document.getElementById('ssh-remember').checked = false;
 
     const overlay = document.getElementById('ssh-modal-overlay');
     overlay.hidden = false;
@@ -529,9 +580,10 @@ document.addEventListener('submit', (e) => {
 
     const username = document.getElementById('ssh-username').value.trim();
     const password = document.getElementById('ssh-password').value;
+    const remember = document.getElementById('ssh-remember').checked;
     closeSshModal();
 
-    if (username && password) scanDockerSSH(ctx.ip, ctx.nodeId, ctx.nodeName, username, password);
+    if (username && password) scanDockerSSH(ctx.ip, ctx.nodeId, ctx.nodeName, username, password, remember);
 });
 
 document.addEventListener('click', (e) => {
@@ -544,34 +596,58 @@ document.addEventListener('keydown', (e) => {
 
 // --- DOCKER-SCAN ÜBER SSH ---
 
-async function scanDockerSSH(ip, nodeId, nodeName, username, password) {
-    const containerDiv = document.getElementById(`docker-services-${nodeId}`);
-    if (!containerDiv) return;
+// Deutsche Kurzbezeichnung für die Docker-Zustände
+const DOCKER_STATE_LABELS = {
+    running: 'Läuft',
+    exited: 'Gestoppt',
+    paused: 'Pausiert',
+    restarting: 'Startet neu',
+    created: 'Erstellt',
+    dead: 'Fehlgeschlagen'
+};
 
-    containerDiv.innerHTML = `<span class="docker-loading">Verbinde über SSH mit ${escapeHtml(nodeName)}...</span>`;
+// username/password/remember sind optional: fehlen sie, versucht der Server, gespeicherte
+// (verschlüsselte) Zugangsdaten für diese Node zu verwenden - kein erneutes Login nötig.
+async function scanDockerSSH(ip, nodeId, nodeName, username, password, remember) {
+    const bodyDiv = document.getElementById(`docker-services-${nodeId}`);
+    let summarySpan = document.getElementById(`docker-summary-${nodeId}`);
+    if (!bodyDiv) return;
+
+    if (summarySpan) summarySpan.textContent = 'Verbinde...';
+    bodyDiv.innerHTML = `<p class="docker-state-msg docker-loading">Verbinde über SSH mit ${escapeHtml(nodeName)}...</p>`;
 
     try {
         const res = await fetch('/api/nodes/ssh-docker', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip, username, password })
+            body: JSON.stringify({ ip, nodeId, username, password, remember: !!remember })
         });
 
         const data = await res.json();
 
         if (!res.ok) throw new Error(data.error || 'Scan fehlgeschlagen.');
 
-        renderDockerContainers(containerDiv, data.containers || []);
+        renderDockerContainers(bodyDiv, summarySpan, data.containers || []);
+
+        if (remember) {
+            if (data.credentialsSaved) {
+                refreshNodeActions(nodeId, ip, nodeName);
+            } else {
+                alert('Der Scan war erfolgreich, aber die Zugangsdaten konnten nicht gespeichert werden (SSH_VAULT_SECRET ist auf dem Server nicht konfiguriert).');
+            }
+        }
 
     } catch (e) {
-        containerDiv.innerHTML = `<span class="docker-error">${escapeHtml(e.message)}</span>`;
+        if (summarySpan) summarySpan.textContent = 'Fehlgeschlagen';
+        bodyDiv.innerHTML = `<p class="docker-state-msg docker-error">${escapeHtml(e.message)}</p>`;
     }
 }
 
-// Zeigt laufende Dienste zuerst an, mit einer kurzen Zusammenfassung oben
-function renderDockerContainers(containerDiv, containers) {
+// Baut die Container-Tabelle auf: laufende Dienste zuerst, mit Image, Status-Detail und Ports
+function renderDockerContainers(bodyDiv, summarySpan, containers) {
     if (containers.length === 0) {
-        containerDiv.innerHTML = '<span class="docker-empty">Keine Docker-Container gefunden.</span>';
+        if (summarySpan) summarySpan.textContent = 'Keine Container gefunden';
+        bodyDiv.innerHTML = '<p class="docker-state-msg">Keine Docker-Container auf diesem Gerät gefunden.</p>';
         return;
     }
 
@@ -581,18 +657,42 @@ function renderDockerContainers(containerDiv, containers) {
     });
 
     const runningCount = sorted.filter(c => c.state === 'running').length;
-    const summary = `${runningCount} von ${sorted.length} Diensten laufen`;
+    if (summarySpan) summarySpan.textContent = `${runningCount} von ${sorted.length} laufen`;
 
-    const badges = sorted.map(c => {
+    const rows = sorted.map(c => {
         const isRunning = c.state === 'running';
-        const safeName = escapeHtml(c.name);
-        const safeStatus = escapeHtml(c.status);
-        return `<span class="docker-badge" title="${safeStatus}"><span class="docker-badge-dot ${isRunning ? 'running' : ''}"></span>${safeName}</span>`;
+        const stateLabel = DOCKER_STATE_LABELS[c.state] || escapeHtml(c.state || 'Unbekannt');
+
+        return `
+        <tr>
+            <td>
+                <div class="docker-container-name">${escapeHtml(c.name)}</div>
+                <div class="docker-container-image">${escapeHtml(c.image || '-')}</div>
+            </td>
+            <td>
+                <div class="docker-status-cell">
+                    <span class="docker-status-dot ${isRunning ? 'running' : ''}"></span>
+                    <div class="docker-status-text">
+                        <span>${stateLabel}</span>
+                        <span class="docker-status-detail">${escapeHtml(c.status || '')}</span>
+                    </div>
+                </div>
+            </td>
+            <td class="docker-ports">${escapeHtml(c.ports || '-')}</td>
+        </tr>`;
     }).join('');
 
-    containerDiv.innerHTML = `
-        <div class="docker-summary">${summary}</div>
-        <div class="docker-badges">${badges}</div>
+    bodyDiv.innerHTML = `
+        <table class="docker-table">
+            <thead>
+                <tr>
+                    <th>Container</th>
+                    <th>Status</th>
+                    <th>Ports</th>
+                </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>
     `;
 }
 

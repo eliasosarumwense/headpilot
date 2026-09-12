@@ -3,6 +3,17 @@ const express = require('express');
 const cors = require('cors');
 const session = require('express-session'); // Für das Session-Management
 
+// Sicherheitsnetz: Ein unerwarteter Fehler (z.B. eine abgelehnte Promise irgendwo tief in
+// einer Bibliothek) soll NIE den ganzen Prozess killen und damit alle offenen Verbindungen
+// mitten in der Anfrage kappen (im Browser sieht man das dann nur als "Load failed").
+// Stattdessen wird der Fehler geloggt und der Server läuft weiter.
+process.on('unhandledRejection', (err) => {
+    console.error('Unbehandelte Promise-Ablehnung (Server läuft weiter):', err);
+});
+process.on('uncaughtException', (err) => {
+    console.error('Unerwarteter Fehler (Server läuft weiter):', err);
+});
+
 const app = express();
 app.set('trust proxy', 1);
 // Basis-Middleware
@@ -283,6 +294,7 @@ app.get('/api/routes', async (req, res) => {
 });
 
 const { Client } = require('ssh2');
+const sshVault = require('./sshVault');
 
 // docker ps -a listet ALLE Container (auch gestoppte). {{json .}} lässt Docker selbst
 // sauber escaptes JSON pro Zeile ausgeben, statt es uns per Hand (fehleranfällig) zusammenzubauen.
@@ -317,25 +329,65 @@ function isDockerNotFound(stderr) {
     return /command not found|no such file/i.test(stderr);
 }
 
+// Metadaten zu gespeicherten SSH-Zugangsdaten für eine Node - liefert NIE das Passwort zurück
+app.get('/api/nodes/:id/ssh-credentials', (req, res) => {
+    // Ohne das würde der Browser eine frühere "saved: false"-Antwort (von vor dem Speichern)
+    // cachen und nach einem Reload weiter anzeigen, dass nichts gespeichert sei.
+    res.set('Cache-Control', 'no-store');
+    res.json(sshVault.getCredentialsInfo(req.params.id));
+});
+
+// Entfernt gespeicherte SSH-Zugangsdaten für eine Node wieder
+app.delete('/api/nodes/:id/ssh-credentials', (req, res) => {
+    sshVault.deleteCredentials(req.params.id);
+    res.json({ ok: true });
+});
+
 // Route: SSH Login und Docker Container abfragen
 app.post('/api/nodes/ssh-docker', (req, res) => {
-    const { ip, username, password } = req.body;
+    const { ip, nodeId, remember } = req.body;
+    let { username, password } = req.body;
 
-    if (!ip || !username || !password) {
-        return res.status(400).json({ error: 'IP, Benutzername und Passwort werden benötigt.' });
+    if (!ip) {
+        return res.status(400).json({ error: 'IP wird benötigt.' });
+    }
+
+    // Keine Zugangsdaten im Request? Dann schauen, ob für diese Node welche im Vault liegen
+    if ((!username || !password) && nodeId) {
+        const saved = sshVault.getCredentials(nodeId);
+        if (saved) {
+            username = saved.username;
+            password = saved.password;
+        }
+    }
+
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Benutzername und Passwort werden benötigt.' });
     }
 
     // Verhindert "Cannot set headers after they are sent", falls 'error' nach 'ready' feuert
     let responded = false;
+    let credentialsSaved = false;
     const respond = (status, body) => {
         if (responded) return;
         responded = true;
-        res.status(status).json(body);
+        res.status(status).json({ ...body, ...(remember ? { credentialsSaved } : {}) });
     };
 
     const conn = new Client();
 
     conn.on('ready', async () => {
+        // Erst JETZT (nach erfolgreicher SSH-Authentifizierung) auf Wunsch verschlüsselt speichern -
+        // so landen nie falsche/ungeprüfte Zugangsdaten im Vault.
+        if (remember && nodeId) {
+            try {
+                sshVault.saveCredentials(nodeId, username, password);
+                credentialsSaved = true;
+            } catch (e) {
+                console.error('SSH-Vault: Speichern fehlgeschlagen:', e.message);
+            }
+        }
+
         try {
             let result = await execOverSsh(conn, DOCKER_PS_CMD);
 
@@ -365,7 +417,15 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
                 const containers = result.stdout.trim().split('\n')
                     .filter(line => line.length > 0)
                     .map(line => JSON.parse(line))
-                    .map(c => ({ name: c.Names, state: c.State, status: c.Status }));
+                    .map(c => ({
+                        id: c.ID,
+                        name: c.Names,
+                        state: c.State,       // z.B. "running", "exited", "paused", "restarting"
+                        status: c.Status,     // z.B. "Up 3 hours" oder "Exited (0) 2 days ago"
+                        image: c.Image,
+                        ports: c.Ports,
+                        runningFor: c.RunningFor
+                    }));
 
                 respond(200, { containers });
             } catch (parseError) {
@@ -383,8 +443,13 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
         let message = `SSH-Verbindung fehlgeschlagen: ${err.message}`;
         if (err.level === 'client-authentication') {
             message = 'SSH Login fehlgeschlagen: Benutzername oder Passwort falsch (oder Passwort-Login für diesen User deaktiviert).';
-        } else if (err.code === 'ETIMEDOUT' || err.level === 'client-timeout') {
-            message = 'Zeitüberschreitung: Gerät über das VPN nicht erreichbar oder Port 22 geschlossen.';
+        } else if (err.code === 'ETIMEDOUT') {
+            // TCP-Verbindung kam nie zustande -> der Headpilot-Server selbst hat keine Route zur VPN-IP
+            // des Geräts (er müsste dafür selbst als Tailscale/Headscale-Client im gleichen Tailnet hängen).
+            message = 'Zeitüberschreitung: Der Headpilot-Server erreicht diese VPN-IP nicht (keine TCP-Verbindung möglich). Läuft auf dem Server, der Headpilot hostet, selbst ein verbundener Tailscale/Headscale-Client?';
+        } else if (err.level === 'client-timeout') {
+            // TCP hat verbunden, aber die SSH-Handshake kam nicht rechtzeitig zustande
+            message = 'Zeitüberschreitung: TCP-Verbindung stand, aber der SSH-Handshake wurde nicht abgeschlossen (Port 22 offen, aber evtl. kein SSH-Dienst oder sehr langsame Antwort).';
         } else if (err.code === 'ECONNREFUSED') {
             message = 'Verbindung abgelehnt: Auf Port 22 läuft kein SSH-Dienst (ist SSH auf dem Gerät aktiviert?).';
         } else if (err.code === 'EHOSTUNREACH' || err.code === 'ENETUNREACH') {
@@ -399,7 +464,10 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
         port: 22,
         username: username,
         password: password,
-        readyTimeout: 8000 // Etwas großzügiger, da VPN-Pfade mehr Latenz haben können
+        // Manche Geräte (v.a. NAS-Systeme) hängen erst mal am Reverse-DNS-Lookup der
+        // anfragenden IP, bevor sie das SSH-Banner senden - über Tailscale-IPs (kein PTR-Eintrag)
+        // kann das mehrere Sekunden dauern. 8s war dafür oft zu knapp.
+        readyTimeout: 20000
     });
 });
 
