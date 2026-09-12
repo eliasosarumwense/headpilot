@@ -265,6 +265,13 @@ code {
     border-color: var(--text-subtle);
 }
 
+.btn:disabled {
+    cursor: default;
+    opacity: 0.55;
+    background: var(--surface);
+    border-color: var(--border-strong);
+}
+
 .btn-primary {
     background: var(--accent);
     border-color: var(--accent);
@@ -329,7 +336,20 @@ code {
     gap: 12px;
 }
 
+.node-identity {
+    min-width: 0;
+}
+
+.node-ping {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
 .status-dot {
+    position: relative;
     width: 9px;
     height: 9px;
     border-radius: 50%;
@@ -339,6 +359,27 @@ code {
 
 .status-dot.online {
     background: var(--success);
+}
+
+/* Klassische, dezente "Ping"-Ripple - dasselbe Prinzip wie bei den meisten
+   Live-Status-Indikatoren (z.B. Tailwind's animate-ping): ein auslaufender Ring
+   in derselben Farbe wie der Punkt selbst, keine Extra-Farbe nötig. */
+.status-dot.pinging::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: var(--text-subtle);
+    animation: ping-ripple 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+.status-dot.online.pinging::after {
+    background: var(--success);
+}
+
+@keyframes ping-ripple {
+    0% { transform: scale(1); opacity: 0.6; }
+    100% { transform: scale(2.6); opacity: 0; }
 }
 
 .node-name {
@@ -352,6 +393,55 @@ code {
     font-size: 0.78rem;
     color: var(--text-muted);
     margin-top: 2px;
+}
+
+.ping-result {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+.ping-result.visible {
+    opacity: 1;
+}
+
+.ping-result.ping-fail {
+    color: var(--danger);
+}
+
+/* Eigenständiger runder Icon-Button statt Text-Button - bewusst anders als die
+   übrigen Aktionen unten, aber genauso reduziert: nur Rahmen, keine Füllfarbe. */
+.ping-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.ping-icon-btn:hover {
+    background: var(--bg);
+    border-color: var(--text-subtle);
+    color: var(--text);
+}
+
+.ping-icon-btn:disabled {
+    cursor: default;
+}
+
+.ping-icon-btn.pinging {
+    color: var(--text);
+    border-color: var(--text-subtle);
+    animation: docker-pulse 1s ease-in-out infinite;
 }
 
 .node-meta {

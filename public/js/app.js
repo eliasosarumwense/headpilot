@@ -72,13 +72,23 @@ async function fetchNodes() {
                 const statusClass = n.online ? 'online' : '';
                 const statusLabel = n.online ? 'Online' : 'Offline';
 
+                const firstIp = ipList[0] || '';
+
                 grid.innerHTML += `
                 <div class="node-card">
                     <div class="node-card-header">
-                        <span class="status-dot ${statusClass}" title="${statusLabel}"></span>
-                        <div>
+                        <span class="status-dot ${statusClass}" id="status-dot-${n.id}" title="${statusLabel}"></span>
+                        <div class="node-identity">
                             <div class="node-name">${escapeHtml(name)}</div>
                             <div class="node-owner">Besitzer: ${escapeHtml(owner)}</div>
+                        </div>
+                        <div class="node-ping">
+                            <span class="ping-result" id="ping-result-${n.id}"></span>
+                            <button class="ping-icon-btn" id="ping-btn-${n.id}" title="Ping" aria-label="Node anpingen" onclick="pingNode('${jsStr(firstIp)}', '${jsStr(n.id)}')">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                                </svg>
+                            </button>
                         </div>
                     </div>
 
@@ -88,9 +98,9 @@ async function fetchNodes() {
                     </div>
 
                     <div class="node-card-footer">
-                        <button class="btn" onclick="renameNode(${n.id}, '${jsStr(name)}')">Umbenennen</button>
-                        <button class="btn" onclick="expireNode(${n.id}, '${jsStr(name)}')">Sitzung beenden</button>
-                        <button class="btn btn-danger" onclick="deleteNode(${n.id}, '${jsStr(name)}')">Löschen</button>
+                        <button class="btn" onclick="renameNode('${jsStr(n.id)}', '${jsStr(name)}')">Umbenennen</button>
+                        <button class="btn" onclick="expireNode('${jsStr(n.id)}', '${jsStr(name)}')">Sitzung beenden</button>
+                        <button class="btn btn-danger" onclick="deleteNode('${jsStr(n.id)}', '${jsStr(name)}')">Löschen</button>
                     </div>
                 </div>`;
             });
@@ -195,6 +205,45 @@ async function forgetSshCredentials(nodeId, ip, name) {
         // Ignorieren - refreshNodeActions zeigt danach ohnehin den aktuellen Stand
     }
     refreshNodeActions(nodeId, ip, name);
+}
+
+// --- PING (Nodes-Ansicht) ---
+
+async function pingNode(ip, nodeId) {
+    if (!ip || ip === '-') return alert('Dieses Gerät hat keine gültige IP-Adresse.');
+
+    const dot = document.getElementById(`status-dot-${nodeId}`);
+    const btn = document.getElementById(`ping-btn-${nodeId}`);
+    const resultSpan = document.getElementById(`ping-result-${nodeId}`);
+    if (!resultSpan) return;
+
+    if (dot) dot.classList.add('pinging');
+    if (btn) { btn.disabled = true; btn.classList.add('pinging'); }
+    resultSpan.className = 'ping-result';
+    resultSpan.textContent = '';
+
+    try {
+        const res = await fetch(`/api/nodes/ping`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip })
+        });
+        const data = await res.json();
+
+        if (data.reachable) {
+            resultSpan.textContent = `${data.timeMs} ms`;
+            resultSpan.className = 'ping-result visible';
+        } else {
+            resultSpan.textContent = 'Keine Antwort';
+            resultSpan.className = 'ping-result visible ping-fail';
+        }
+    } catch (e) {
+        resultSpan.textContent = 'Fehler beim Pingen';
+        resultSpan.className = 'ping-result visible ping-fail';
+    } finally {
+        if (dot) dot.classList.remove('pinging');
+        if (btn) { btn.disabled = false; btn.classList.remove('pinging'); }
+    }
 }
 
 // 1. Gerät umbenennen

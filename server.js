@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const session = require('express-session'); // Für das Session-Management
+const { execFile } = require('child_process');
 
 // Sicherheitsnetz: Ein unerwarteter Fehler (z.B. eine abgelehnte Promise irgendwo tief in
 // einer Bibliothek) soll NIE den ganzen Prozess killen und damit alle offenen Verbindungen
@@ -179,6 +180,31 @@ app.post('/api/nodes/:id/expire', async (req, res) => {
         }
         res.json({ success: true });
     } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// 4. Node per ICMP anpingen (der Headpilot-Server ist ja selbst Tailnet-Peer, siehe SSH-Docker-Feature)
+app.post('/api/nodes/ping', (req, res) => {
+    const { ip } = req.body;
+
+    // Nur echte IPv4/IPv6-Zeichen zulassen - execFile geht zwar ohne Shell (kein Injection-Risiko),
+    // aber so bekommen wir bei Unsinn sofort einen sauberen 400 statt eines kryptischen ping-Fehlers.
+    if (!ip || !/^[0-9a-fA-F:.]+$/.test(ip)) {
+        return res.status(400).json({ error: 'Ungültige IP-Adresse.' });
+    }
+
+    // Ein Ping-Versuch, max. 2 Sekunden Wartezeit auf Antwort. macOS (Entwicklung) und
+    // Linux (Produktion) haben leicht unterschiedliche Flags für die Timeout-Angabe.
+    const args = process.platform === 'darwin'
+        ? ['-c', '1', '-t', '2', ip]
+        : ['-c', '1', '-W', '2', ip];
+
+    execFile('ping', args, { timeout: 4000 }, (err, stdout) => {
+        const match = /time[=<]\s*([\d.]+)\s*ms/i.exec(stdout);
+        if (match) {
+            return res.json({ reachable: true, timeMs: Math.round(parseFloat(match[1])) });
+        }
+        res.json({ reachable: false });
+    });
 });
 
 // 1. Alle Benutzer abrufen
