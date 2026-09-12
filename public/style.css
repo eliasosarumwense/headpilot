@@ -19,6 +19,7 @@
     --danger: #b91c1c;
     --danger-bg: #fdf2f2;
     --success: #16a34a;
+    --warning: #d97706; /* nur für "wartet auf Genehmigung" bei Subnet Routes verwendet */
     --sidebar-bg: #18181b;
     --sidebar-border: #29292e;
     --sidebar-text: #9a9aa2;
@@ -359,6 +360,17 @@ code {
 
 .status-dot.online {
     background: var(--success);
+}
+
+/* Für die Kuma-Status-Karten: "down" ist der einzige Fall auf der Status-Seite,
+   der wirklich ein Problem meldet - daher die einzige Stelle mit Rot als Status-Punkt. */
+.status-dot.down {
+    background: var(--danger);
+}
+
+/* Für Subnet Routes: eine angekündigte, aber noch nicht genehmigte Route */
+.status-dot.pending {
+    background: var(--warning);
 }
 
 /* Klassische, dezente "Ping"-Ripple - dasselbe Prinzip wie bei den meisten
@@ -717,4 +729,105 @@ code {
     justify-content: flex-end;
     gap: 8px;
     margin-top: 6px;
+}
+
+/* =========================================================================
+   STATUS (Uptime Kuma)
+   ========================================================================= */
+/* Ein Dienst pro Zeile (wie im Kuma-Dashboard) statt eines Karten-Grids - dadurch bekommt
+   auch die Heartbeat-Leiste genug Breite, um vernünftig auszusehen. */
+.status-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.status-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.status-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.status-card-name {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.3;
+}
+
+.status-card-label {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+}
+
+/* Verlaufs-Leiste wie im Kuma-Dashboard: schmale, FESTE Balkenbreite statt gestreckt
+   (Kuma streckt die Balken nie auf die volle Breite - überschüssiger Platz bleibt frei) */
+.status-heartbeat-bar {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 28px;
+    overflow: hidden;
+}
+
+.status-heartbeat-bit {
+    flex: 0 0 6px;
+    width: 6px;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--border);
+}
+
+.status-heartbeat-bit.up { background: var(--success); }
+.status-heartbeat-bit.down { background: var(--danger); }
+.status-heartbeat-bit.pending,
+.status-heartbeat-bit.maintenance { background: var(--text-subtle); }
+
+.status-card-metrics {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+}
+
+.status-card-metrics strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.status-card-actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* Dezenter Platzhalter beim ersten Laden - reine CSS-Puls-Animation, keine Library */
+.status-skeleton {
+    min-height: 96px;
+    background: var(--bg);
+    animation: docker-pulse 1.4s ease-in-out infinite;
+}
+
+.status-hint {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 40px 24px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
 }

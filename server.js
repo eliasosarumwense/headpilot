@@ -3,6 +3,35 @@ const express = require('express');
 const cors = require('cors');
 const session = require('express-session'); // Für das Session-Management
 const { execFile } = require('child_process');
+const dns = require('dns');
+
+// Workaround für ein bekanntes macOS/Tailscale-Problem: Wenn Tailscale MagicDNS die DNS-
+// Auflösung dynamisch über die System Configuration verwaltet (statt einer statischen
+// /etc/resolv.conf), findet Node's OS-basiertes dns.lookup() (das fetch/http/socket.io intern
+// für JEDEN Hostnamen nutzt) manche Domains nicht (ENOTFOUND), obwohl sie ganz normal per DNS
+// auflösbar sind - dns.resolve4/6 (fragt den Nameserver direkt ab, ohne über die OS-Ebene zu
+// gehen) findet sie hingegen problemlos. Reine Lokal-macOS-Eigenheit, betrifft die
+// VPS-Produktion nicht, schadet dort aber auch nicht (Fallback greift nur, wenn die normale
+// Auflösung tatsächlich fehlschlägt).
+const originalDnsLookup = dns.lookup;
+dns.lookup = function patchedDnsLookup(hostname, options, callback) {
+    if (typeof options === 'function') { callback = options; options = {}; }
+    originalDnsLookup(hostname, options, (err, address, family) => {
+        if (!err) return callback(null, address, family);
+        if (err.code !== 'ENOTFOUND') return callback(err);
+
+        const wantAll = options && options.all;
+        Promise.allSettled([dns.promises.resolve4(hostname), dns.promises.resolve6(hostname)])
+            .then(([v4, v6]) => {
+                const addrs = [];
+                if (v4.status === 'fulfilled') addrs.push(...v4.value.map(a => ({ address: a, family: 4 })));
+                if (v6.status === 'fulfilled') addrs.push(...v6.value.map(a => ({ address: a, family: 6 })));
+                if (addrs.length === 0) return callback(err); // ursprünglichen Fehler zurückgeben
+                if (wantAll) return callback(null, addrs);
+                callback(null, addrs[0].address, addrs[0].family);
+            });
+    });
+};
 
 // Sicherheitsnetz: Ein unerwarteter Fehler (z.B. eine abgelehnte Promise irgendwo tief in
 // einer Bibliothek) soll NIE den ganzen Prozess killen und damit alle offenen Verbindungen
@@ -306,17 +335,334 @@ app.post('/api/keys/expire', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// =========================================================================
+// SUBNET ROUTES
+// =========================================================================
+// Diese Headscale-Version hat keine eigenständige "/api/v1/routes"-Liste mit IDs mehr
+// (Aufruf liefert 404) - Routen leben stattdessen direkt am Node: "availableRoutes"
+// (per --advertise-routes vom Gerät angekündigt) und "approvedRoutes" (von einem Admin
+// genehmigt, per POST .../approve_routes gesetzt - ersetzt dabei IMMER die komplette
+// Liste für diesen Node, kein Toggle für eine einzelne Route). Wir bauen daraus pro
+// Node/Route-Kombination eine flache Liste, wie sie das Frontend braucht.
 app.get('/api/routes', async (req, res) => {
     try {
-        const response = await fetch(`${HEADSCALE_URL}/api/v1/routes`, {
+        const response = await fetch(`${HEADSCALE_URL}/api/v1/node`, {
             headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
         });
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Fehler ${response.status}: ${errorText}`);
         }
-        res.json(await response.json());
+        const data = await response.json();
+
+        const routes = [];
+        (data.nodes || []).forEach(n => {
+            const advertised = n.availableRoutes || [];
+            const approved = n.approvedRoutes || [];
+            // Auch eine genehmigte, aber nicht mehr angekündigte Route mit anzeigen -
+            // sonst könnte man sie nie mehr über die UI wieder deaktivieren.
+            const allRoutes = [...new Set([...advertised, ...approved])];
+
+            allRoutes.forEach(route => {
+                routes.push({
+                    nodeId: n.id,
+                    nodeName: n.givenName || n.name,
+                    route,
+                    advertised: advertised.includes(route),
+                    approved: approved.includes(route)
+                });
+            });
+        });
+
+        res.json({ routes });
     } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// Holt den aktuellen (frischen!) approvedRoutes-Stand eines Nodes und setzt ihn mit
+// der Ziel-Route hinzugefügt oder entfernt neu - approve_routes ersetzt immer die
+// komplette Liste, daher muss hier immer der volle, aktuelle Stand mitgeschickt werden.
+async function setNodeRouteApproval(nodeId, route, shouldApprove) {
+    const nodeRes = await fetch(`${HEADSCALE_URL}/api/v1/node/${nodeId}`, {
+        headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
+    });
+    if (!nodeRes.ok) throw new Error(`Node nicht gefunden: ${await nodeRes.text()}`);
+    const { node } = await nodeRes.json();
+
+    const current = node.approvedRoutes || [];
+    const updated = shouldApprove
+        ? [...new Set([...current, route])]
+        : current.filter(r => r !== route);
+
+    const approveRes = await fetch(`${HEADSCALE_URL}/api/v1/node/${nodeId}/approve_routes`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ routes: updated })
+    });
+    if (!approveRes.ok) throw new Error(`Headscale-Fehler: ${await approveRes.text()}`);
+}
+
+app.post('/api/routes/approve', async (req, res) => {
+    const { nodeId, route } = req.body;
+    if (!nodeId || !route) return res.status(400).json({ error: 'nodeId und route werden benötigt.' });
+    try {
+        await setNodeRouteApproval(nodeId, route, true);
+        res.json({ success: true });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/routes/disable', async (req, res) => {
+    const { nodeId, route } = req.body;
+    if (!nodeId || !route) return res.status(400).json({ error: 'nodeId und route werden benötigt.' });
+    try {
+        await setNodeRouteApproval(nodeId, route, false);
+        res.json({ success: true });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// =========================================================================
+// UPTIME KUMA STATUS
+// =========================================================================
+// Direkter Login mit echten Zugangsdaten (statt einer öffentlichen Status-Page mit Slug) -
+// Kuma bietet dafür keine normale REST-API, sondern nur seine Socket.IO-Schnittstelle
+// (dieselbe, die auch das Kuma-Webinterface selbst benutzt).
+// KUMA_URL zeigt direkt auf Kuma im Tailnet (z.B. http://100.x.x.x:3001) bzw. auf dem
+// VPS selbst auf http://127.0.0.1:3001. Bewusst KEIN Default: Fehlt eine der drei
+// Variablen, antwortet die Route sofort mit "configured: false" - ganz ohne Netzwerk-Request.
+const { io: kumaIo } = require('socket.io-client');
+const KUMA_URL = process.env.KUMA_URL;
+const KUMA_USER = process.env.KUMA_USER;
+const KUMA_PASS = process.env.KUMA_PASS;
+const KUMA_TIMEOUT_MS = 3000;
+
+// Kuma-Heartbeat-Status-Codes: 0 = down, 1 = up, 2 = pending, 3 = maintenance
+const KUMA_STATUS_MAP = { 0: 'down', 1: 'up', 2: 'pending', 3: 'maintenance' };
+
+// Öffnet eine Socket.IO-Verbindung zu Kuma, loggt sich ein und übergibt den fertig
+// eingeloggten Socket an "work" (muss ein Promise zurückgeben). Kümmert sich zentral um
+// Verbindungsfehler, Login-Fehler, Timeout und sauberes Trennen danach - jede Kuma-Aktion
+// (lesen, anlegen, bearbeiten, löschen) nutzt dieselbe Grundlage.
+function withKumaLogin(work) {
+    return new Promise((resolve, reject) => {
+        if (!KUMA_URL || !KUMA_USER || !KUMA_PASS) {
+            return reject(new Error('Kuma ist nicht konfiguriert.'));
+        }
+
+        const socket = kumaIo(KUMA_URL, { reconnection: false, timeout: KUMA_TIMEOUT_MS });
+        let settled = false;
+
+        const timer = setTimeout(() => finish(new Error('Timeout bei der Verbindung zu Kuma')), KUMA_TIMEOUT_MS);
+
+        function finish(err, result) {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            socket.disconnect();
+            if (err) reject(err); else resolve(result);
+        }
+
+        socket.on('connect_error', (err) => finish(err));
+
+        socket.on('connect', () => {
+            socket.emit('login', { username: KUMA_USER, password: KUMA_PASS, token: '' }, (loginRes) => {
+                if (!loginRes || !loginRes.ok) {
+                    return finish(new Error(loginRes && loginRes.msg ? loginRes.msg : 'Kuma-Login fehlgeschlagen'));
+                }
+                work(socket).then((result) => finish(null, result)).catch(finish);
+            });
+        });
+    });
+}
+
+// Sammelt für jeden Monitor Name, Typ, Ziel, aktuellen Status, 24h-Uptime% und letzte
+// Antwortzeit. Kuma schickt diese Infos nach dem Login nicht auf einen Schlag, sondern über
+// mehrere einzelne Events pro Monitor, deshalb sammeln wir, bis wir für jeden bekannten
+// Monitor sowohl Heartbeat als auch Uptime haben (oder der Timeout zuerst greift).
+// Wie viele der letzten Heartbeats für die Verlaufs-Leiste (wie im Kuma-Dashboard) mitgeschickt werden
+const KUMA_HEARTBEAT_BAR_LENGTH = 50;
+
+function fetchKumaMonitors() {
+    return withKumaLogin((socket) => new Promise((resolve) => {
+        const monitorsById = {}; // monitorId -> { name, type, target, port }
+        const heartbeatLists = {}; // monitorId -> voller Heartbeat-Verlauf (neueste zuletzt)
+        const uptimes = {};      // monitorId -> 24h-Uptime (0-1)
+        let expectedIds = null;
+
+        function finish() {
+            resolve(Object.keys(monitorsById).map(id => {
+                const beats = heartbeatLists[id] || [];
+                const lastBeat = beats[beats.length - 1];
+                return {
+                    id: Number(id),
+                    name: monitorsById[id].name,
+                    type: monitorsById[id].type,
+                    target: monitorsById[id].target,
+                    port: monitorsById[id].port,
+                    status: lastBeat ? (KUMA_STATUS_MAP[lastBeat.status] || 'unknown') : 'unknown',
+                    uptime24h: typeof uptimes[id] === 'number' ? Math.round(uptimes[id] * 1000) / 10 : null,
+                    responseTimeMs: lastBeat && typeof lastBeat.ping === 'number' ? lastBeat.ping : null,
+                    // Verlaufs-Leiste wie im Kuma-Dashboard: die letzten N Heartbeats als einfache Status-Liste
+                    heartbeatBar: beats.slice(-KUMA_HEARTBEAT_BAR_LENGTH).map(b => KUMA_STATUS_MAP[b.status] || 'unknown')
+                };
+            }));
+        }
+
+        function checkComplete() {
+            if (expectedIds && expectedIds.every(id => heartbeatLists[id] !== undefined && uptimes[id] !== undefined)) {
+                finish();
+            }
+        }
+
+        socket.on('monitorList', (list) => {
+            expectedIds = Object.keys(list);
+            expectedIds.forEach(id => {
+                monitorsById[id] = {
+                    name: list[id].name,
+                    type: list[id].type,
+                    target: list[id].type === 'http' ? list[id].url : list[id].hostname,
+                    port: list[id].type === 'port' ? list[id].port : null
+                };
+            });
+            if (expectedIds.length === 0) finish(); // keine Monitore vorhanden
+        });
+
+        socket.on('heartbeatList', (monitorId, list) => {
+            heartbeatLists[monitorId] = Array.isArray(list) ? list : [];
+            checkComplete();
+        });
+
+        socket.on('uptime', (monitorId, duration, percent) => {
+            if (duration === 24) {
+                uptimes[monitorId] = percent;
+                checkComplete();
+            }
+        });
+    }));
+}
+
+// Baut aus den vereinfachten Formularfeldern (Name/Typ/Ziel/Port/Intervall) das Monitor-
+// Objekt im von Kuma erwarteten Format. Bewusst nur die 3 gängigsten Typen unterstützt.
+function buildKumaMonitorPayload({ type, name, target, port, interval }) {
+    const checkInterval = Number(interval) || 60;
+    const base = {
+        name,
+        interval: checkInterval,
+        retryInterval: checkInterval,
+        resendInterval: 0,
+        maxretries: 0,
+        notificationIDList: {},
+        upsideDown: false
+    };
+
+    if (type === 'http') {
+        return { ...base, type: 'http', url: target, method: 'GET', accepted_statuscodes: ['200-299'], ignoreTls: false, maxredirects: 10, timeout: 48 };
+    }
+    if (type === 'port') {
+        return { ...base, type: 'port', hostname: target, port: Number(port) };
+    }
+    if (type === 'ping') {
+        return { ...base, type: 'ping', hostname: target };
+    }
+    throw new Error('Unbekannter Monitor-Typ.');
+}
+
+// Überträgt die vereinfachten Formularfelder auf ein bereits bestehendes, vollständiges
+// Kuma-Monitor-Objekt (Kumas "editMonitor" erwartet immer das komplette Objekt zurück,
+// kein Teil-Update - alle nicht angefassten Felder bleiben also einfach wie sie waren).
+function applyKumaMonitorFields(existing, { name, target, port, interval }) {
+    const updated = { ...existing };
+    if (name !== undefined && name !== '') updated.name = name;
+    if (interval !== undefined && interval !== '') {
+        updated.interval = Number(interval);
+        updated.retryInterval = Number(interval);
+    }
+    if (existing.type === 'http') {
+        if (target !== undefined && target !== '') updated.url = target;
+    } else {
+        if (target !== undefined && target !== '') updated.hostname = target;
+        if (existing.type === 'port' && port !== undefined && port !== '') updated.port = Number(port);
+    }
+    return updated;
+}
+
+function validateMonitorInput(body) {
+    const { type, name, target } = body || {};
+    if (!['http', 'port', 'ping'].includes(type)) return 'Ungültiger Monitor-Typ.';
+    if (!name || !String(name).trim()) return 'Name wird benötigt.';
+    if (!target || !String(target).trim()) return 'Ziel (URL/Host) wird benötigt.';
+    if (type === 'port' && (!body.port || isNaN(Number(body.port)))) return 'Für TCP-Port wird eine gültige Portnummer benötigt.';
+    return null;
+}
+
+// Route: Uptime-Kuma-Status für die "Status"-Ansicht
+app.get('/api/status', async (req, res) => {
+    if (!KUMA_URL || !KUMA_USER || !KUMA_PASS) {
+        return res.json({ configured: false });
+    }
+
+    try {
+        const monitors = await fetchKumaMonitors();
+        res.json({ configured: true, available: true, monitors });
+    } catch (error) {
+        // Timeout, Verbindungsfehler oder falsche Zugangsdaten - Dashboard bleibt in
+        // jedem Fall nutzbar, wir melden nur "nicht erreichbar".
+        console.error('Uptime Kuma nicht erreichbar:', error.message);
+        res.json({ configured: true, available: false });
+    }
+});
+
+// Route: neuen Kuma-Monitor anlegen
+app.post('/api/status/monitors', async (req, res) => {
+    const validationError = validateMonitorInput(req.body);
+    if (validationError) return res.status(400).json({ error: validationError });
+
+    try {
+        const result = await withKumaLogin((socket) => new Promise((resolve, reject) => {
+            socket.emit('add', buildKumaMonitorPayload(req.body), (addRes) => {
+                if (addRes && addRes.ok) resolve(addRes);
+                else reject(new Error(addRes && addRes.msg ? addRes.msg : 'Anlegen fehlgeschlagen.'));
+            });
+        }));
+        res.json({ ok: true, monitorID: result.monitorID });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Route: bestehenden Kuma-Monitor bearbeiten (der Typ selbst bleibt fix, nur Name/Ziel/Port/Intervall änderbar)
+app.put('/api/status/monitors/:id', async (req, res) => {
+    if (!req.body.name || !String(req.body.name).trim()) return res.status(400).json({ error: 'Name wird benötigt.' });
+    if (!req.body.target || !String(req.body.target).trim()) return res.status(400).json({ error: 'Ziel (URL/Host) wird benötigt.' });
+
+    try {
+        await withKumaLogin((socket) => new Promise((resolve, reject) => {
+            socket.emit('getMonitor', Number(req.params.id), (getRes) => {
+                if (!getRes || !getRes.ok) return reject(new Error(getRes && getRes.msg ? getRes.msg : 'Monitor nicht gefunden.'));
+                const updated = applyKumaMonitorFields(getRes.monitor, req.body);
+                socket.emit('editMonitor', updated, (editRes) => {
+                    if (editRes && editRes.ok) resolve(editRes);
+                    else reject(new Error(editRes && editRes.msg ? editRes.msg : 'Ändern fehlgeschlagen.'));
+                });
+            });
+        }));
+        res.json({ ok: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Route: Kuma-Monitor löschen
+app.delete('/api/status/monitors/:id', async (req, res) => {
+    try {
+        await withKumaLogin((socket) => new Promise((resolve, reject) => {
+            socket.emit('deleteMonitor', Number(req.params.id), (delRes) => {
+                if (delRes && delRes.ok) resolve(delRes);
+                else reject(new Error(delRes && delRes.msg ? delRes.msg : 'Löschen fehlgeschlagen.'));
+            });
+        }));
+        res.json({ ok: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 const { Client } = require('ssh2');

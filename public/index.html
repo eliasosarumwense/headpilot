@@ -15,8 +15,10 @@
                 <li><a href="#" id="nav-dashboard" onclick="loadView('dashboard')">Startseite (Übersicht)</a></li>
                 <li><a href="#" id="nav-nodes" onclick="loadView('nodes')">Geräte (Nodes)</a></li>
                 <li><a href="#" id="nav-docker" onclick="loadView('docker')">Docker Dienste</a></li>
+                <li><a href="#" id="nav-status" onclick="loadView('status')">Status</a></li>
                 <li><a href="#" id="nav-users" onclick="loadView('users')">Benutzer (Users)</a></li>
                 <li><a href="#" id="nav-keys" onclick="loadView('keys')">Pre-Auth Keys</a></li>
+                <li><a href="#" id="nav-routes" onclick="loadView('routes')">Subnet Routes</a></li>
             </ul>
         </div>
 
@@ -56,6 +58,42 @@
                 <div class="modal-actions">
                     <button type="button" class="btn" onclick="closeSshModal()">Abbrechen</button>
                     <button type="submit" class="btn btn-primary">Verbinden</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="monitor-modal-overlay" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="monitor-modal-title">
+            <h3 id="monitor-modal-title">Dienst hinzufügen</h3>
+            <form id="monitor-form">
+                <label class="modal-field">
+                    Name
+                    <input type="text" id="monitor-name" required>
+                </label>
+                <label class="modal-field">
+                    Typ
+                    <select id="monitor-type" onchange="updateMonitorFormFields()">
+                        <option value="http">HTTP(S)</option>
+                        <option value="port">TCP-Port</option>
+                        <option value="ping">Ping</option>
+                    </select>
+                </label>
+                <label class="modal-field">
+                    <span id="monitor-target-label">URL</span>
+                    <input type="text" id="monitor-target" required>
+                </label>
+                <label class="modal-field" id="monitor-port-field">
+                    Port
+                    <input type="number" id="monitor-port" min="1" max="65535">
+                </label>
+                <label class="modal-field">
+                    Prüfintervall (Sekunden)
+                    <input type="number" id="monitor-interval" min="20" value="60">
+                </label>
+                <div class="modal-actions">
+                    <button type="button" class="btn" onclick="closeMonitorModal()">Abbrechen</button>
+                    <button type="submit" class="btn btn-primary" id="monitor-form-submit">Speichern</button>
                 </div>
             </form>
         </div>

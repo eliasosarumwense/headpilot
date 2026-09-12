@@ -34,8 +34,10 @@ async function loadView(viewName) {
         if (viewName === 'dashboard') fetchDashboardStats();
         if (viewName === 'nodes') fetchNodes();
         if (viewName === 'docker') fetchDockerNodes();
+        if (viewName === 'status') initStatusView();
         if (viewName === 'users') fetchUsers();
         if (viewName === 'keys') initKeysView();
+        if (viewName === 'routes') fetchRoutes();
 
     } catch (error) {
         if (requestId !== viewToken) return;
@@ -246,6 +248,193 @@ async function pingNode(ip, nodeId) {
     }
 }
 
+// --- API LOGIK: STATUS (Uptime Kuma) ---
+
+let statusPollTimer = null;
+
+async function initStatusView() {
+    // Falls schon ein Timer aus einem vorherigen Besuch dieser Ansicht läuft, sauber stoppen
+    if (statusPollTimer) clearInterval(statusPollTimer);
+
+    await fetchStatus();
+
+    // Alle 30s aktualisieren - bricht sich selbst ab, sobald die Status-Ansicht
+    // verlassen wurde (erkennbar daran, dass #status-content nicht mehr existiert)
+    statusPollTimer = setInterval(() => {
+        if (!document.getElementById('status-content')) {
+            clearInterval(statusPollTimer);
+            statusPollTimer = null;
+            return;
+        }
+        fetchStatus();
+    }, 30000);
+}
+
+async function fetchStatus() {
+    const container = document.getElementById('status-content');
+    if (!container) return;
+
+    try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        renderStatus(container, data);
+    } catch (e) {
+        renderStatus(container, { configured: true, available: false });
+    }
+}
+
+const KUMA_STATUS_LABELS = {
+    up: 'Online',
+    down: 'Nicht erreichbar',
+    pending: 'Ausstehend',
+    maintenance: 'Wartung',
+    unknown: 'Unbekannt'
+};
+
+// Merkt sich die zuletzt geladenen Monitore (nach ID), damit das Bearbeiten-Modal
+// die vorhandenen Werte vorausfüllen kann, ohne extra beim Server nachzufragen
+let currentMonitorsById = {};
+
+function renderStatus(container, data) {
+    const actionBar = document.getElementById('status-action-bar');
+
+    if (!data.configured) {
+        if (actionBar) actionBar.hidden = true;
+        container.innerHTML = '<div class="status-hint">Status-Monitoring ist in dieser Umgebung nicht eingerichtet.</div>';
+        return;
+    }
+
+    if (!data.available) {
+        if (actionBar) actionBar.hidden = true;
+        container.innerHTML = '<div class="status-hint">Status-Server momentan nicht erreichbar.</div>';
+        return;
+    }
+
+    if (actionBar) actionBar.hidden = false;
+
+    const monitors = data.monitors || [];
+    currentMonitorsById = {};
+    monitors.forEach(m => { currentMonitorsById[m.id] = m; });
+
+    if (monitors.length === 0) {
+        container.innerHTML = '<div class="status-hint">Noch keine Dienste angelegt. Klicke oben auf "+ Dienst hinzufügen".</div>';
+        return;
+    }
+
+    const dotClass = (status) => status === 'up' ? 'online' : status === 'down' ? 'down' : '';
+
+    // Verlaufs-Leiste wie im Kuma-Dashboard: ein Balken pro Heartbeat, fehlende am Anfang
+    // werden als leere (graue) Balken aufgefüllt, damit die Leiste immer gleich breit ist
+    const heartbeatBarHtml = (bar) => {
+        const beats = bar || [];
+        const padding = Math.max(0, 50 - beats.length);
+        const bits = Array(padding).fill('').concat(beats);
+        return bits.map(status => `<span class="status-heartbeat-bit ${status}"></span>`).join('');
+    };
+
+    const cards = monitors.map(m => `
+        <div class="status-card">
+            <div class="status-card-header">
+                <span class="status-dot ${dotClass(m.status)}"></span>
+                <div>
+                    <div class="status-card-name">${escapeHtml(m.name)}</div>
+                    <div class="status-card-label">${KUMA_STATUS_LABELS[m.status] || 'Unbekannt'}</div>
+                </div>
+            </div>
+            <div class="status-heartbeat-bar">${heartbeatBarHtml(m.heartbeatBar)}</div>
+            <div class="status-card-metrics">
+                <span>Uptime (24h): <strong>${m.uptime24h !== null && m.uptime24h !== undefined ? m.uptime24h + '%' : '-'}</strong></span>
+                <span>Antwortzeit: <strong>${m.responseTimeMs !== null && m.responseTimeMs !== undefined ? m.responseTimeMs + ' ms' : '-'}</strong></span>
+            </div>
+            <div class="status-card-actions">
+                <button class="btn" onclick="openMonitorModal(${m.id})">Bearbeiten</button>
+                <button class="btn btn-danger" onclick="deleteMonitor(${m.id}, '${jsStr(m.name)}')">Löschen</button>
+            </div>
+        </div>
+    `).join('');
+
+    container.innerHTML = `<div class="status-grid">${cards}</div>`;
+}
+
+// --- MONITOR-MODAL (Anlegen / Bearbeiten) ---
+
+let editingMonitorId = null;
+
+// Zeigt/versteckt das Port-Feld und passt das Label des Ziel-Felds an den gewählten Typ an
+function updateMonitorFormFields() {
+    const type = document.getElementById('monitor-type').value;
+    document.getElementById('monitor-target-label').textContent = type === 'http' ? 'URL' : 'Host / IP-Adresse';
+    document.getElementById('monitor-port-field').hidden = type !== 'port';
+}
+
+function openMonitorModal(monitorId) {
+    const monitor = monitorId !== undefined ? currentMonitorsById[monitorId] : null;
+    editingMonitorId = monitor ? monitor.id : null;
+
+    document.getElementById('monitor-modal-title').textContent = monitor ? 'Dienst bearbeiten' : 'Dienst hinzufügen';
+    document.getElementById('monitor-form-submit').textContent = monitor ? 'Speichern' : 'Anlegen';
+    document.getElementById('monitor-name').value = monitor ? monitor.name : '';
+    document.getElementById('monitor-type').value = monitor ? monitor.type : 'http';
+    document.getElementById('monitor-type').disabled = !!monitor; // Typ kann beim Bearbeiten nicht geändert werden
+    document.getElementById('monitor-target').value = monitor ? (monitor.target || '') : '';
+    document.getElementById('monitor-port').value = monitor && monitor.port ? monitor.port : '';
+    document.getElementById('monitor-interval').value = 60;
+    updateMonitorFormFields();
+
+    document.getElementById('monitor-modal-overlay').hidden = false;
+    document.getElementById('monitor-name').focus();
+}
+
+function closeMonitorModal() {
+    document.getElementById('monitor-modal-overlay').hidden = true;
+    document.getElementById('monitor-type').disabled = false;
+    editingMonitorId = null;
+}
+
+document.addEventListener('submit', async (e) => {
+    if (e.target.id !== 'monitor-form') return;
+    e.preventDefault();
+
+    const body = {
+        type: document.getElementById('monitor-type').value,
+        name: document.getElementById('monitor-name').value.trim(),
+        target: document.getElementById('monitor-target').value.trim(),
+        port: document.getElementById('monitor-port').value,
+        interval: document.getElementById('monitor-interval').value
+    };
+    const idToEdit = editingMonitorId;
+    closeMonitorModal();
+
+    try {
+        const res = await fetch(idToEdit ? `/api/status/monitors/${idToEdit}` : '/api/status/monitors', {
+            method: idToEdit ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Speichern fehlgeschlagen.');
+        fetchStatus();
+    } catch (err) {
+        alert('Fehler: ' + err.message);
+    }
+});
+
+document.addEventListener('click', (e) => {
+    if (e.target.id === 'monitor-modal-overlay') closeMonitorModal();
+});
+
+async function deleteMonitor(monitorId, name) {
+    if (!confirm(`Dienst "${name}" wirklich aus Kuma löschen?`)) return;
+    try {
+        const res = await fetch(`/api/status/monitors/${monitorId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Löschen fehlgeschlagen.');
+        fetchStatus();
+    } catch (err) {
+        alert('Fehler: ' + err.message);
+    }
+}
+
 // 1. Gerät umbenennen
 async function renameNode(id, oldName) {
     const rawName = prompt(`Neuen Namen für Gerät "${oldName}" eingeben:\n\n(Hinweis: Wird automatisch für DNS in Kleinbuchstaben & Bindestriche umgewandelt)`);
@@ -427,7 +616,7 @@ async function fetchDashboardStats() {
         // 3. Routen
         const routesList = [];
         if (routesData.routes) {
-            routesData.routes.filter(r => r.enabled).forEach(r => routesList.push(r.prefix));
+            routesData.routes.filter(r => r.approved).forEach(r => routesList.push(r.route));
         }
         document.getElementById('stat-routes').innerText = routesList.length;
         document.getElementById('detail-routes').innerText = routesList.length > 0 ? formatList(routesList) : "Keine aktiven Subnetze";
@@ -465,66 +654,64 @@ async function initKeysView() {
         const res = await fetch('/api/users');
         const data = await res.json();
         const select = document.getElementById('key-user-select');
-        
+
         select.innerHTML = '<option value="">-- Benutzer wählen --</option>';
         if (data.users && data.users.length > 0) {
             data.users.forEach(u => {
-                // FIX: Wir speichern die ID (Zahl) versteckt im Attribut "data-id"!
-                select.innerHTML += `<option value="${u.name}" data-id="${u.id}">${u.name}</option>`;
+                select.innerHTML += `<option value="${jsStr(u.name)}" data-id="${jsStr(u.id)}">${escapeHtml(u.name)}</option>`;
             });
         }
     } catch (e) {
         console.error("Fehler beim Laden", e);
     }
+
+    // Zeigt alle aktiven Keys direkt an - kein Benutzer-Filter nötig, um sie überhaupt zu sehen
+    fetchKeys();
 }
 
 async function fetchKeys() {
-    const select = document.getElementById('key-user-select');
-    const userName = select.value;
-    const tbody = document.getElementById('keys-table-body');
-    
-    if (!userName) {
-        tbody.innerHTML = '<tr><td colspan="4">Bitte wähle oben einen Benutzer aus.</td></tr>';
-        return;
-    }
-
-    tbody.innerHTML = '<tr><td colspan="4">Lade Keys...</td></tr>';
+    const grid = document.getElementById('keys-grid');
+    if (!grid) return;
+    grid.innerHTML = '<p>Lade Keys...</p>';
 
     try {
-        // Wir laden alle Keys vom Server
-        const res = await fetch(`/api/keys`);
+        const res = await fetch('/api/keys');
         const data = await res.json();
-        tbody.innerHTML = '';
-        
-        if (data.preAuthKeys && data.preAuthKeys.length > 0) {
-            const jetzt = new Date();
-            jetzt.setSeconds(jetzt.getSeconds() + 10); // 10 Sekunden Puffer
-            
-            // FIX: Wir filtern nach Keys, die aktiv sind UND exakt diesem User gehören!
-            const activeKeys = data.preAuthKeys.filter(k => {
-                const isRightUser = (k.user && k.user.name === userName);
-                const isNotExpired = new Date(k.expiration) > jetzt;
-                return isRightUser && isNotExpired;
-            });
-            
-            if(activeKeys.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4">Keine aktiven Keys für diesen Benutzer gefunden.</td></tr>';
-                return;
-            }
 
-            activeKeys.forEach(k => {
-                tbody.innerHTML += `<tr>
-                    <td><code>${k.key}</code></td>
-                    <td>${k.reusable ? 'Ja' : 'Nein'}</td>
-                    <td>${new Date(k.expiration).toLocaleString()}</td>
-                    <td><button class="btn btn-danger" onclick="expireKey('${userName}', '${k.key}')">Ablaufen lassen</button></td>
-                </tr>`;
-            });
-        } else {
-            tbody.innerHTML = '<tr><td colspan="4">Keine Keys auf dem Server gefunden.</td></tr>';
+        if (!data.preAuthKeys || data.preAuthKeys.length === 0) {
+            grid.innerHTML = '<p>Keine Keys auf dem Server gefunden.</p>';
+            return;
         }
+
+        const jetzt = new Date();
+        const activeKeys = data.preAuthKeys.filter(k => new Date(k.expiration) > jetzt);
+
+        if (activeKeys.length === 0) {
+            grid.innerHTML = '<p>Keine aktiven Keys vorhanden.</p>';
+            return;
+        }
+
+        grid.innerHTML = activeKeys.map(k => {
+            const owner = k.user?.name || '-';
+            return `
+            <div class="node-card">
+                <div class="node-card-header">
+                    <div>
+                        <div class="node-name">${escapeHtml(k.key)}</div>
+                        <div class="node-owner">Für: ${escapeHtml(owner)}</div>
+                    </div>
+                </div>
+                <div class="node-meta">
+                    <div>Reusable: ${k.reusable ? 'Ja' : 'Nein'}</div>
+                    <div>Läuft ab: ${new Date(k.expiration).toLocaleString()}</div>
+                </div>
+                <div class="node-card-footer">
+                    <button class="btn btn-danger" onclick="expireKey('${jsStr(k.id)}', '${jsStr(k.key)}')">Ablaufen lassen</button>
+                </div>
+            </div>`;
+        }).join('');
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="4" style="color:#b91c1c;">Fehler beim Laden!</td></tr>';
+        grid.innerHTML = '<p style="color:#b91c1c;">Fehler beim Laden!</p>';
     }
 }
 
@@ -532,7 +719,7 @@ async function createKey() {
     const select = document.getElementById('key-user-select');
     const userName = select.value;
     const reusable = document.getElementById('key-reusable').checked;
-    
+
     if (!userName) return alert("Bitte wähle zuerst einen Benutzer aus!");
 
     // FIX: Wir lesen die ID aus und machen zwingend eine Zahl (Integer) daraus!
@@ -553,11 +740,11 @@ async function createKey() {
                 expiration: safeExpiration
             })
         });
-        
+
         const data = await res.json();
-        
+
         if (!res.ok) throw new Error(data.error || data.message || "Unbekannter Fehler");
-        
+
         alert(`WICHTIG! Neuer Key generiert:\n\nKopiere ihn jetzt. Er wird danach nie wieder komplett angezeigt!\n\n${data.preAuthKey.key}`);
         fetchKeys();
     } catch (e) {
@@ -565,29 +752,102 @@ async function createKey() {
     }
 }
 
-async function expireKey(userName, key) {
-    if (!confirm(`Möchtest du den Key ${key.substring(0,8)}... wirklich deaktivieren?`)) return;
-    
+// FIX: Headscale identifiziert den zu löschenden Key über seine ID, NICHT über den Key-Wert
+// selbst - die Liste liefert den Key-Wert ohnehin nur maskiert zurück (z.B. "hskey-...-***"),
+// ein Aufruf mit diesem maskierten Wert schlägt lautlos fehl (200 OK, aber ohne jede Wirkung).
+async function expireKey(keyId, keyPrefix) {
+    if (!confirm(`Möchtest du den Key ${keyPrefix.substring(0, 20)}... wirklich deaktivieren?`)) return;
+
     try {
         const res = await fetch('/api/keys/expire', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            // Wir probieren es hier wieder mit dem userName (String)
-            body: JSON.stringify({ user: userName, key: key })
+            body: JSON.stringify({ id: keyId })
         });
-        
-        if (!res.ok) {
-            const data = await res.json();
-            throw new Error(data.error || "Server lehnte das Ablaufen ab.");
-        }
-        
-        // WICHTIG: Kurz warten, damit Headscale Zeit hat, die DB zu aktualisieren
-        setTimeout(() => {
-            fetchKeys();
-        }, 500);
 
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Server lehnte das Ablaufen ab.");
+
+        fetchKeys();
     } catch (e) {
         alert("Fehler beim Deaktivieren: " + e.message);
+    }
+}
+
+// --- API LOGIK: SUBNET ROUTES ---
+
+async function fetchRoutes() {
+    const grid = document.getElementById('routes-grid');
+    if (!grid) return;
+
+    try {
+        const res = await fetch('/api/routes');
+        const data = await res.json();
+
+        if (!res.ok) throw new Error(data.error || 'Fehler beim Laden.');
+
+        const routes = data.routes || [];
+        if (routes.length === 0) {
+            grid.innerHTML = '<div class="status-hint">Keine Subnet Routes angekündigt. Auf einem Gerät z.B. mit "tailscale up --advertise-routes=&lt;CIDR&gt;" eine Route bekannt machen.</div>';
+            return;
+        }
+
+        grid.innerHTML = routes.map(r => {
+            const dotClass = r.approved ? 'online' : 'pending';
+            const statusLabel = r.approved ? 'Genehmigt' : 'Wartet auf Genehmigung';
+            const actionBtn = r.approved
+                ? `<button class="btn btn-danger" onclick="disableRoute('${jsStr(r.nodeId)}', '${jsStr(r.route)}')">Deaktivieren</button>`
+                : `<button class="btn btn-primary" onclick="approveRoute('${jsStr(r.nodeId)}', '${jsStr(r.route)}')">Genehmigen</button>`;
+
+            return `
+            <div class="status-card">
+                <div class="status-card-header">
+                    <span class="status-dot ${dotClass}"></span>
+                    <div>
+                        <div class="status-card-name">${escapeHtml(r.route)}</div>
+                        <div class="status-card-label">${escapeHtml(r.nodeName)}</div>
+                    </div>
+                </div>
+                <div class="status-card-metrics">
+                    <span>Angekündigt: <strong>${r.advertised ? 'Ja' : 'Nein'}</strong></span>
+                    <span>Status: <strong>${statusLabel}</strong></span>
+                </div>
+                <div class="status-card-actions">${actionBtn}</div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        grid.innerHTML = `<div class="status-hint" style="color:#b91c1c;">Fehler beim Laden: ${escapeHtml(e.message)}</div>`;
+    }
+}
+
+async function approveRoute(nodeId, route) {
+    try {
+        const res = await fetch('/api/routes/approve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nodeId, route })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Genehmigen fehlgeschlagen.');
+        fetchRoutes();
+    } catch (e) {
+        alert('Fehler: ' + e.message);
+    }
+}
+
+async function disableRoute(nodeId, route) {
+    if (!confirm(`Route "${route}" wirklich deaktivieren?`)) return;
+    try {
+        const res = await fetch('/api/routes/disable', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nodeId, route })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Deaktivieren fehlgeschlagen.');
+        fetchRoutes();
+    } catch (e) {
+        alert('Fehler: ' + e.message);
     }
 }
 
@@ -640,7 +900,7 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeSshModal();
+    if (e.key === 'Escape') { closeSshModal(); closeMonitorModal(); }
 });
 
 // --- DOCKER-SCAN ÜBER SSH ---

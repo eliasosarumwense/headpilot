@@ -2,7 +2,7 @@
 <p class="subtitle">Generiere Einladungs-Schlüssel, um neue Geräte in dein VPN aufzunehmen.</p>
 
 <div class="action-bar">
-    <select id="key-user-select" onchange="fetchKeys()">
+    <select id="key-user-select">
         <option value="">Benutzer laden...</option>
     </select>
 
@@ -13,18 +13,6 @@
     <button class="btn-primary" onclick="createKey()">+ Key generieren</button>
 </div>
 
-<div class="card">
-    <table>
-        <thead>
-            <tr>
-                <th>KEY (PRÄFIX)</th>
-                <th>REUSABLE</th>
-                <th>ABLAUFDATUM</th>
-                <th>AKTIONEN</th>
-            </tr>
-        </thead>
-        <tbody id="keys-table-body">
-            <tr><td colspan="4">Bitte wähle oben einen Benutzer aus.</td></tr>
-        </tbody>
-    </table>
+<div id="keys-grid" class="nodes-grid">
+    <p>Lade Keys...</p>
 </div>
