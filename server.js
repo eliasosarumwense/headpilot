@@ -4,6 +4,22 @@ const cors = require('cors');
 const session = require('express-session'); // Für das Session-Management
 const { execFile } = require('child_process');
 const dns = require('dns');
+const audit = require('./audit');
+
+// Liest den eingeloggten Benutzernamen aus dem gespeicherten OIDC-id_token (JWT).
+// Keine erneute Signatur-Prüfung nötig - das Token wurde bereits einmal beim Token-
+// Austausch mit Keycloak (über HTTPS + Client-Secret) verifiziert, wir lesen hier nur
+// den bereits vertrauenswürdigen Claim aus der Session wieder aus.
+function getActor(req) {
+    try {
+        const idToken = req.session?.tokens?.id_token;
+        if (!idToken) return 'unknown';
+        const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString('utf8'));
+        return payload.preferred_username || payload.email || 'unknown';
+    } catch (e) {
+        return 'unknown';
+    }
+}
 
 // Workaround für ein bekanntes macOS/Tailscale-Problem: Wenn Tailscale MagicDNS die DNS-
 // Auflösung dynamisch über die System Configuration verwaltet (statt einer statischen
@@ -110,6 +126,8 @@ app.get('/login/callback', async (req, res) => {
         req.session.isAuthenticated = true;
         req.session.tokens = tokenData;
 
+        await audit.logAudit({ actor: getActor(req), action: 'LOGIN_SUCCESS', ip: req.ip });
+
         // HIER IST DIE GEÄNDERTE ZEILE: Weiterleitung exklusiv auf den Unterpfad /dashboard
         res.redirect('/dashboard');
     } catch (error) {
@@ -177,7 +195,9 @@ app.post('/api/nodes/:id/rename/:newName', async (req, res) => {
             const errorText = await response.text();
             throw new Error(`Fehler ${response.status}: ${errorText}`);
         }
-        res.json(await response.json());
+        const data = await response.json();
+        await audit.logAudit({ actor: getActor(req), action: 'NODE_RENAME', target: id, details: { newName }, ip: req.ip });
+        res.json(data);
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -192,6 +212,7 @@ app.delete('/api/nodes/:id', async (req, res) => {
             const errorText = await response.text();
             throw new Error(`Fehler ${response.status}: ${errorText}`);
         }
+        await audit.logAudit({ actor: getActor(req), action: 'NODE_DELETE', target: req.params.id, ip: req.ip });
         res.json({ success: true });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -256,7 +277,9 @@ app.post('/api/users', async (req, res) => {
             body: JSON.stringify({ name: req.body.name })
         });
         if (!response.ok) throw new Error(`Fehler: ${response.status}`);
-        res.json(await response.json());
+        const data = await response.json();
+        await audit.logAudit({ actor: getActor(req), action: 'USER_CREATE', target: data.user?.id, details: { name: req.body.name }, ip: req.ip });
+        res.json(data);
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -287,6 +310,7 @@ app.delete('/api/users/:id', async (req, res) => {
             const errorText = await response.text();
             throw new Error(`Fehler ${response.status}: ${errorText}`);
         }
+        await audit.logAudit({ actor: getActor(req), action: 'USER_DELETE', target: req.params.id, ip: req.ip });
         res.json({ success: true });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -313,10 +337,18 @@ app.post('/api/keys', async (req, res) => {
             body: JSON.stringify(req.body)
         });
         if (!response.ok) {
-            const errorText = await response.text(); 
+            const errorText = await response.text();
             throw new Error(`Headscale API-Fehler ${response.status}: ${errorText}`);
         }
-        res.json(await response.json());
+        const data = await response.json();
+        await audit.logAudit({
+            actor: getActor(req),
+            action: 'PREAUTHKEY_CREATE',
+            target: data.preAuthKey?.id,
+            details: { user: req.body.user, reusable: req.body.reusable },
+            ip: req.ip
+        });
+        res.json(data);
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -406,6 +438,7 @@ app.post('/api/routes/approve', async (req, res) => {
     if (!nodeId || !route) return res.status(400).json({ error: 'nodeId und route werden benötigt.' });
     try {
         await setNodeRouteApproval(nodeId, route, true);
+        await audit.logAudit({ actor: getActor(req), action: 'ROUTE_APPROVE', target: nodeId, details: { route }, ip: req.ip });
         res.json({ success: true });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -622,6 +655,7 @@ app.post('/api/status/monitors', async (req, res) => {
                 else reject(new Error(addRes && addRes.msg ? addRes.msg : 'Anlegen fehlgeschlagen.'));
             });
         }));
+        await audit.logAudit({ actor: getActor(req), action: 'MONITOR_CREATE', target: result.monitorID, details: { name: req.body.name, type: req.body.type }, ip: req.ip });
         res.json({ ok: true, monitorID: result.monitorID });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -644,6 +678,7 @@ app.put('/api/status/monitors/:id', async (req, res) => {
                 });
             });
         }));
+        await audit.logAudit({ actor: getActor(req), action: 'MONITOR_EDIT', target: req.params.id, details: { name: req.body.name }, ip: req.ip });
         res.json({ ok: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -659,6 +694,7 @@ app.delete('/api/status/monitors/:id', async (req, res) => {
                 else reject(new Error(delRes && delRes.msg ? delRes.msg : 'Löschen fehlgeschlagen.'));
             });
         }));
+        await audit.logAudit({ actor: getActor(req), action: 'MONITOR_DELETE', target: req.params.id, ip: req.ip });
         res.json({ ok: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -841,6 +877,28 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
         // kann das mehrere Sekunden dauern. 8s war dafür oft zu knapp.
         readyTimeout: 20000
     });
+});
+
+// =========================================================================
+// AUDIT LOG
+// =========================================================================
+// Gleiches Drei-Zustands-Prinzip wie bei Kuma: "configured: false" ohne DATABASE_URL
+// (kein Verbindungsversuch), "available: false" bei einem echten DB-Fehler, sonst die
+// Einträge.
+app.get('/api/audit', async (req, res) => {
+    if (!audit.isConfigured()) {
+        return res.json({ configured: false });
+    }
+
+    try {
+        const limit = parseInt(req.query.limit, 10) || 50;
+        const offset = parseInt(req.query.offset, 10) || 0;
+        const entries = await audit.getAuditLog({ limit, offset });
+        res.json({ configured: true, available: true, entries });
+    } catch (error) {
+        console.error('Audit-Log nicht erreichbar:', error.message);
+        res.json({ configured: true, available: false });
+    }
 });
 
 // Server starten

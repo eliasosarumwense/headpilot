@@ -100,19 +100,35 @@ Zeigt von Geräten per `--advertise-routes` angekündigte Subnetze an, mit Geneh
 
 **Frontend**: [routes.html](public/views/routes.html) + [app.js](public/js/app.js), gleiches Karten-Layout wie der Status-Reiter (`.status-grid`/`.status-card`, Skeleton-Ladezustand). Gelber Punkt (neue `--warning`-Variable, ausschließlich hier verwendet) für "wartet auf Genehmigung", grün für genehmigt.
 
+## 8. Audit Log (neuer Reiter)
+
+Protokolliert sicherheitsrelevante Aktionen (wer hat was wann gemacht) in Postgres.
+
+**Backend** ([audit.js](audit.js), neu): `pg`-Pool aus `DATABASE_URL`, `logAudit({actor, action, target, details, ip})` schreibt einen Eintrag in `headpilot.audit_log` und wirft dabei **nie** einen Fehler nach außen (ein Logging-Fehler darf niemals die eigentliche Aktion, z.B. "Node löschen", verhindern - wird nur geloggt). `getAuditLog({limit, offset})` liest die letzten Einträge. Gleiches Drei-Zustands-Prinzip wie bei Kuma: ohne `DATABASE_URL` bleibt alles deaktiviert, kein Verbindungsversuch.
+
+**Actor-Ermittlung:** Es gibt in server.js kein `req.user` (kein Passport o.ä. im Einsatz) - die Session speichert nur die rohen OIDC-Tokens (`req.session.tokens`). Neue Hilfsfunktion `getActor(req)` dekodiert das bereits validierte `id_token` (JWT) und liest `preferred_username` daraus aus.
+
+**Instrumentierte Routen** ([server.js](server.js)): `LOGIN_SUCCESS` (OIDC-Callback), `NODE_RENAME`, `NODE_DELETE`, `USER_CREATE`, `USER_DELETE`, `PREAUTHKEY_CREATE`, `ROUTE_APPROVE`, `MONITOR_CREATE`, `MONITOR_EDIT`, `MONITOR_DELETE` - jeweils erst geloggt, nachdem die eigentliche Aktion bei Headscale/Kuma erfolgreich war.
+
+**Frontend**: [audit.html](public/views/audit.html) + [app.js](public/js/app.js) - klassische Tabelle (Zeitstempel/Actor/Action/Target) mit "Neu laden"-Button, kein Polling.
+
+**Nicht live testbar:** Anders als bei Headscale/Kuma lief hier keine echte Postgres-Instanz zum Gegentesten zur Verfügung (Docker-Container läuft nur auf dem VPS) - SQL wurde sorgfältig geprüft, aber die tatsächliche DB-Interaktion muss auf dem VPS verifiziert werden. Auf dem VPS in der dortigen `.env`: `DATABASE_URL=postgres://<user>:<passwort>@127.0.0.1:5432/headpilot` (Schema `headpilot`, Tabelle `audit_log` muss bereits existieren).
+
 ## Neue/geänderte Dateien im Überblick
 
 | Datei | Änderung |
 |---|---|
-| `server.js` | Docker-Scan, SSH-Vault-Routen, Ping-Endpoint, Kuma-Integration (Status + CRUD), Subnet-Routes-CRUD, Pre-Auth-Key-Fix, Sicherheitsnetz |
+| `server.js` | Docker-Scan, SSH-Vault-Routen, Ping-Endpoint, Kuma-Integration (Status + CRUD), Subnet-Routes-CRUD, Pre-Auth-Key-Fix, Audit-Log-Aufrufe, Sicherheitsnetz |
+| `audit.js` | **Neu** – Postgres-Audit-Log (pg-Pool, logAudit/getAuditLog) |
 | `sshVault.js` | **Neu** – verschlüsselte SSH-Zugangsdaten-Speicherung |
 | `public/style.css` | Komplett überarbeitet (minimalistisch), neue Sektionen für Docker/Status/Ping/Modal/Routes, `--warning`-Variable |
-| `public/js/app.js` | View-Router mit Cache/Transitions, Docker-Scan-UI, Ping, Kuma-Status-UI inkl. CRUD-Modal, Keys-Grid-Redesign + ID-Fix, Subnet-Routes-UI |
-| `public/index.html` | Neue Nav-Einträge (Docker, Status, Subnet Routes), SSH- und Monitor-Modal |
+| `public/js/app.js` | View-Router mit Cache/Transitions, Docker-Scan-UI, Ping, Kuma-Status-UI inkl. CRUD-Modal, Keys-Grid-Redesign + ID-Fix, Subnet-Routes-UI, Audit-Log-Tabelle |
+| `public/index.html` | Neue Nav-Einträge (Docker, Status, Subnet Routes, Audit Log), SSH- und Monitor-Modal |
 | `public/views/docker.html` | **Neu** |
 | `public/views/status.html` | **Neu** |
 | `public/views/routes.html` | **Neu** |
+| `public/views/audit.html` | **Neu** |
 | `public/views/keys.html` | Tabelle → Karten-Grid |
 | `.env.example` | **Neu** – dokumentiert alle benötigten Umgebungsvariablen |
 | `.gitignore` | `/data/` (SSH-Vault) ergänzt |
-| `package.json` | `nodemonConfig.ignore` für `data/` |
+| `package.json` | `nodemonConfig.ignore` für `data/`, neue Dependency `pg` |

@@ -38,6 +38,7 @@ async function loadView(viewName) {
         if (viewName === 'users') fetchUsers();
         if (viewName === 'keys') initKeysView();
         if (viewName === 'routes') fetchRoutes();
+        if (viewName === 'audit') fetchAuditLog();
 
     } catch (error) {
         if (requestId !== viewToken) return;
@@ -848,6 +849,45 @@ async function disableRoute(nodeId, route) {
         fetchRoutes();
     } catch (e) {
         alert('Fehler: ' + e.message);
+    }
+}
+
+// --- API LOGIK: AUDIT LOG ---
+
+async function fetchAuditLog() {
+    const tbody = document.getElementById('audit-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="4">Lade...</td></tr>';
+
+    try {
+        const res = await fetch('/api/audit?limit=50&offset=0');
+        const data = await res.json();
+
+        if (!data.configured) {
+            tbody.innerHTML = '<tr><td colspan="4">Audit-Log ist in dieser Umgebung nicht eingerichtet.</td></tr>';
+            return;
+        }
+        if (!data.available) {
+            tbody.innerHTML = '<tr><td colspan="4" style="color:#b91c1c;">Audit-Log-Datenbank momentan nicht erreichbar.</td></tr>';
+            return;
+        }
+
+        const entries = data.entries || [];
+        if (entries.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4">Noch keine Einträge vorhanden.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = entries.map(e => `
+            <tr>
+                <td>${new Date(e.timestamp).toLocaleString()}</td>
+                <td>${escapeHtml(e.actor)}</td>
+                <td>${escapeHtml(e.action)}</td>
+                <td>${escapeHtml(e.target ?? '-')}</td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:#b91c1c;">Fehler beim Laden!</td></tr>';
     }
 }
 
