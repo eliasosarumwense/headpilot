@@ -151,6 +151,12 @@ app.get('/logout', (req, res) => {
     });
 });
 
+app.post('/api/test-alarm-event', (req, res) => {
+    const receivedAt = Date.now();
+    console.log('[TEST-ALARM] Empfangen:', JSON.stringify(req.body), 'um', receivedAt);
+    res.json({ status: 'received', receivedAt });
+});
+
 // =========================================================================
 // 2. DIE AUTH-SCHRANKE (MIDDLEWARE)
 // =========================================================================
@@ -1161,11 +1167,6 @@ app.get('/api/audit', async (req, res) => {
     }
 });
 
-app.post('/api/test-alarm-event', (req, res) => {
-  const receivedAt = Date.now();
-  console.log('[TEST-ALARM] Empfangen:', JSON.stringify(req.body), 'um', receivedAt);
-  res.json({ status: 'received', receivedAt });
-});
 
 // Server starten
 app.listen(PORT, () => {
