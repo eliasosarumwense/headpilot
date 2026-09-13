@@ -5,6 +5,23 @@
     <button class="btn-primary" style="margin-left: auto;" onclick="openMonitorModal()">+ Dienst hinzufügen</button>
 </div>
 
+<div class="card notification-card" id="notification-card" hidden>
+    <div class="notification-header">
+        <h3 class="notification-title">Discord-Benachrichtigung</h3>
+        <div class="notification-toggle-wrap">
+            <span class="notification-toggle-text" id="notification-status-text">Deaktiviert</span>
+            <label class="ios-toggle">
+                <input type="checkbox" id="notification-enabled" onchange="handleNotificationToggle()">
+                <span class="ios-toggle-slider"></span>
+            </label>
+        </div>
+    </div>
+    <div class="notification-body">
+        <input type="url" id="notification-webhook-input" placeholder="https://discord.com/api/webhooks/...">
+        <button class="btn btn-primary" onclick="saveNotificationConfig()">Speichern</button>
+    </div>
+</div>
+
 <div id="status-content">
     <div class="status-grid" id="status-grid">
         <div class="status-card status-skeleton"></div>

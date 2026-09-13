@@ -4,6 +4,8 @@ const cors = require('cors');
 const session = require('express-session'); // Für das Session-Management
 const { execFile } = require('child_process');
 const dns = require('dns');
+const fs = require('fs');
+const path = require('path');
 const audit = require('./audit');
 
 // Liest den eingeloggten Benutzernamen aus dem gespeicherten OIDC-id_token (JWT).
@@ -574,28 +576,115 @@ function fetchKumaMonitors() {
 
 // Baut aus den vereinfachten Formularfeldern (Name/Typ/Ziel/Port/Intervall) das Monitor-
 // Objekt im von Kuma erwarteten Format. Bewusst nur die 3 gängigsten Typen unterstützt.
-function buildKumaMonitorPayload({ type, name, target, port, interval }) {
+// Kuma verarbeitet beim Anlegen/Bearbeiten offenbar ALLE möglichen Monitor-Felder (auch die für
+// ganz andere Typen wie Kafka/RADIUS/gRPC/MQTT/OAuth/Datenbank), unabhängig vom gewählten Typ -
+// fehlt eines davon, crasht Kuma intern ("Cannot read properties of undefined (reading 'every')").
+// Live herausgefunden, indem ein echtes, komplettes Monitor-Objekt aus Kuma schrittweise auf die
+// tatsächlich nötigen Felder reduziert wurde. Deshalb hier ein vollständiges Set neutraler
+// Defaults für alle Typen, nicht nur für die drei (http/port/ping), die wir selbst anbieten.
+function kumaMonitorDefaults({ type, interval }) {
     const checkInterval = Number(interval) || 60;
-    const base = {
-        name,
+    return {
+        description: null,
+        url: 'https://',
+        method: 'GET',
+        hostname: null,
+        port: null,
+        maxretries: 0,
+        weight: 2000,
+        active: true,
+        type,
+        timeout: 48,
         interval: checkInterval,
         retryInterval: checkInterval,
         resendInterval: 0,
-        maxretries: 0,
+        keyword: null,
+        invertKeyword: false,
+        expiryNotification: false,
+        ignoreTls: false,
+        upsideDown: false,
+        packetSize: 56,
+        maxredirects: 10,
+        accepted_statuscodes: ['200-299'],
+        dns_resolve_type: 'A',
+        dns_resolve_server: '1.1.1.1',
+        dns_last_result: null,
+        docker_container: '',
+        docker_host: null,
+        proxyId: null,
         notificationIDList: {},
-        upsideDown: false
+        mqttTopic: '',
+        mqttSuccessMessage: '',
+        databaseQuery: null,
+        authMethod: null,
+        grpcUrl: null,
+        grpcProtobuf: null,
+        grpcMethod: null,
+        grpcServiceName: null,
+        grpcEnableTls: false,
+        radiusCalledStationId: null,
+        radiusCallingStationId: null,
+        game: null,
+        gamedigGivenPortOnly: true,
+        httpBodyEncoding: null,
+        jsonPath: null,
+        expectedValue: null,
+        kafkaProducerTopic: null,
+        kafkaProducerBrokers: [],
+        kafkaProducerSsl: false,
+        kafkaProducerAllowAutoTopicCreation: false,
+        kafkaProducerMessage: null,
+        kafkaProducerSaslOptions: { mechanism: 'None' },
+        headers: null,
+        body: null,
+        grpcBody: null,
+        grpcMetadata: null,
+        basic_auth_user: null,
+        basic_auth_pass: null,
+        oauth_client_id: null,
+        oauth_client_secret: null,
+        oauth_token_url: null,
+        oauth_scopes: null,
+        oauth_auth_method: 'client_secret_basic',
+        pushToken: null,
+        databaseConnectionString: null,
+        radiusUsername: null,
+        radiusPassword: null,
+        radiusSecret: null,
+        mqttUsername: '',
+        mqttPassword: '',
+        authWorkstation: null,
+        authDomain: null,
+        tlsCa: null,
+        tlsCert: null,
+        tlsKey: null
     };
+}
 
-    if (type === 'http') {
-        return { ...base, type: 'http', url: target, method: 'GET', accepted_statuscodes: ['200-299'], ignoreTls: false, maxredirects: 10, timeout: 48 };
-    }
-    if (type === 'port') {
-        return { ...base, type: 'port', hostname: target, port: Number(port) };
-    }
-    if (type === 'ping') {
-        return { ...base, type: 'ping', hostname: target };
-    }
-    throw new Error('Unbekannter Monitor-Typ.');
+// Reine Ausgabe-/Berechnungsfelder, die getMonitor zwar mitliefert, "editMonitor" aber weder
+// kennt noch akzeptiert (führt sonst zu SQL-Fehlern à la "no column named ..."). Ebenfalls live
+// herausgefunden, indem jedes einzelne verursachende Feld nacheinander entfernt wurde.
+// WICHTIG: "id" bewusst NICHT in dieser Liste - editMonitor braucht sie im Objekt selbst, um zu
+// wissen, welcher Datensatz gemeint ist (führt sonst zu "Undefined binding(s) ... id = ?").
+const KUMA_MONITOR_READONLY_FIELDS = [
+    'childrenIDs', 'pathName', 'parent',
+    'forceInactive', 'includeSensitiveData', 'maintenance', 'screenshot', 'tags'
+];
+
+function stripReadonlyMonitorFields(monitor) {
+    const clean = { ...monitor };
+    KUMA_MONITOR_READONLY_FIELDS.forEach(f => delete clean[f]);
+    return clean;
+}
+
+function buildKumaMonitorPayload({ type, name, target, port, interval }) {
+    if (!['http', 'port', 'ping'].includes(type)) throw new Error('Unbekannter Monitor-Typ.');
+
+    const payload = { ...kumaMonitorDefaults({ type, interval }), name };
+    if (type === 'http') payload.url = target;
+    if (type === 'port') { payload.hostname = target; payload.port = Number(port); }
+    if (type === 'ping') payload.hostname = target;
+    return payload;
 }
 
 // Überträgt die vereinfachten Formularfelder auf ein bereits bestehendes, vollständiges
@@ -614,7 +703,7 @@ function applyKumaMonitorFields(existing, { name, target, port, interval }) {
         if (target !== undefined && target !== '') updated.hostname = target;
         if (existing.type === 'port' && port !== undefined && port !== '') updated.port = Number(port);
     }
-    return updated;
+    return stripReadonlyMonitorFields(updated);
 }
 
 function validateMonitorInput(body) {
@@ -695,6 +784,102 @@ app.delete('/api/status/monitors/:id', async (req, res) => {
             });
         }));
         await audit.logAudit({ actor: getActor(req), action: 'MONITOR_DELETE', target: req.params.id, ip: req.ip });
+        res.json({ ok: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// =========================================================================
+// DISCORD-BENACHRICHTIGUNG (Status-Reiter)
+// =========================================================================
+// Bewusst nur EINE Discord-Benachrichtigung, ein/aus schaltbar - mehr braucht es nicht.
+// Kuma selbst hat kein "aktiv/pausiert"-Feld, das über die API wirklich funktioniert (das
+// "active"-Feld wird beim Anlegen immer stillschweigend auf true zurückgesetzt, egal was man
+// schickt - live gegengetestet). Der Schalter wird deshalb über Anlegen/Löschen simuliert:
+// "Aus" entfernt die Benachrichtigung komplett aus Kuma (stoppt sofort alle Alerts), "Ein"
+// legt sie mit der gemerkten URL neu an. Die URL selbst merkt sich Headpilot lokal (Datei
+// unter data/), damit man sie beim Wiedereinschalten nicht erneut eintippen muss.
+const NOTIFICATION_CONFIG_PATH = path.join(__dirname, 'data', 'notification-config.json');
+const HEADPILOT_NOTIFICATION_NAME = 'Headpilot Discord';
+
+function readNotificationConfig() {
+    try {
+        return JSON.parse(fs.readFileSync(NOTIFICATION_CONFIG_PATH, 'utf8'));
+    } catch (e) {
+        return { webhookUrl: '', enabled: false };
+    }
+}
+
+function writeNotificationConfig(config) {
+    fs.mkdirSync(path.dirname(NOTIFICATION_CONFIG_PATH), { recursive: true });
+    fs.writeFileSync(NOTIFICATION_CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
+}
+
+function fetchKumaNotifications() {
+    return withKumaLogin((socket) => new Promise((resolve) => {
+        // Kuma schickt "notificationList" von selbst direkt nach dem Login.
+        // "config" ist bei Kuma ein JSON-STRING (nicht verschachteltes Objekt).
+        socket.on('notificationList', (list) => resolve(list || []));
+    }));
+}
+
+// Legt Headpilots eigene Discord-Benachrichtigung an oder bearbeitet sie - anhand des festen
+// Namens identifiziert, damit andere, manuell in Kuma angelegte Benachrichtigungen (falls
+// vorhanden) unangetastet bleiben. "isDefault"/"applyExisting" wenden sie automatisch auf
+// alle (auch künftige) Dienste an, ohne manuelle Zuweisung pro Monitor.
+async function syncHeadpilotNotification({ webhookUrl, enabled }) {
+    const existing = (await fetchKumaNotifications()).find(n => n.name === HEADPILOT_NOTIFICATION_NAME);
+
+    if (!enabled || !webhookUrl) {
+        if (existing) {
+            await withKumaLogin((socket) => new Promise((resolve, reject) => {
+                socket.emit('deleteNotification', existing.id, (res) => {
+                    if (res && res.ok) resolve(res);
+                    else reject(new Error(res && res.msg ? res.msg : 'Deaktivieren fehlgeschlagen.'));
+                });
+            }));
+        }
+        return;
+    }
+
+    await withKumaLogin((socket) => new Promise((resolve, reject) => {
+        const notification = {
+            name: HEADPILOT_NOTIFICATION_NAME,
+            type: 'discord',
+            isDefault: true,
+            applyExisting: true,
+            discordWebhookUrl: webhookUrl,
+            discordUsername: 'Headpilot',
+            discordPrefixMessage: ''
+        };
+        socket.emit('addNotification', notification, existing ? existing.id : null, (res) => {
+            if (res && res.ok) resolve(res);
+            else reject(new Error(res && res.msg ? res.msg : 'Speichern fehlgeschlagen.'));
+        });
+    }));
+}
+
+app.get('/api/status/notification', (req, res) => {
+    if (!KUMA_URL || !KUMA_USER || !KUMA_PASS) {
+        return res.json({ configured: false });
+    }
+    const config = readNotificationConfig();
+    res.json({ configured: true, webhookUrl: config.webhookUrl || '', enabled: !!config.enabled });
+});
+
+app.post('/api/status/notification', async (req, res) => {
+    const enabled = !!req.body.enabled;
+    const webhookUrl = (req.body.webhookUrl || '').trim();
+
+    if (enabled && !/^https:\/\/discord(app)?\.com\/api\/webhooks\//.test(webhookUrl)) {
+        return res.status(400).json({ error: 'Gültige Discord-Webhook-URL wird benötigt (https://discord.com/api/webhooks/...), um sie zu aktivieren.' });
+    }
+
+    try {
+        await syncHeadpilotNotification({ webhookUrl, enabled });
+        writeNotificationConfig({ webhookUrl, enabled });
+        await audit.logAudit({ actor: getActor(req), action: 'NOTIFICATION_SAVE', details: { enabled }, ip: req.ip });
         res.json({ ok: true });
     } catch (error) {
         res.status(500).json({ error: error.message });

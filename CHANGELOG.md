@@ -114,15 +114,51 @@ Protokolliert sicherheitsrelevante Aktionen (wer hat was wann gemacht) in Postgr
 
 **Nicht live testbar:** Anders als bei Headscale/Kuma lief hier keine echte Postgres-Instanz zum Gegentesten zur Verfügung (Docker-Container läuft nur auf dem VPS) - SQL wurde sorgfältig geprüft, aber die tatsächliche DB-Interaktion muss auf dem VPS verifiziert werden. Auf dem VPS in der dortigen `.env`: `DATABASE_URL=postgres://<user>:<passwort>@127.0.0.1:5432/headpilot` (Schema `headpilot`, Tabelle `audit_log` muss bereits existieren).
 
+## 9. Karte (gebaut, dann wieder entfernt)
+
+Kurz gebaut und live getestet (funktionierte), dann auf Wunsch wieder komplett entfernt.
+
+**Für später festgehalten, falls das Thema nochmal aufkommt:** Headscales Admin-API gibt für keinen Node eine öffentliche/WAN-IP preis (nur die interne Tailscale-IP, z.B. `100.64.0.2`, nicht geolokalisierbar - komplettes Node-JSON gegen die echte Instanz geprüft, kein "Endpoint"-Feld vorhanden). Funktionierender Workaround wäre: für Nodes mit gespeicherten SSH-Zugangsdaten ([sshVault.js](sshVault.js)) per SSH `curl api.ipify.org` die echte öffentliche IP abfragen und über ip-api.com geolokalisieren (live getestet: SSH → echte IP → korrekt "Vienna, Austria"). Einschränkung dabei: nur Geräte mit SSH-Zugriff abdeckbar, und IP-Geolocation ist ohnehin nur ungefähr (Provider-Standort, keine exakte Adresse).
+
+**Grund für die Entfernung:** Nutzer mochte das Feature nicht.
+
+## 10. Discord-Benachrichtigung für Kuma-Dienste
+
+Ermöglicht das Ein-/Ausschalten einer Discord-Benachrichtigung bei Downtimes direkt aus Headpilot, ohne Kumas eigenes Interface öffnen zu müssen. Ursprünglich als volle Liste (mehrere benannte Benachrichtigungen, je mit Anlegen/Bearbeiten/Löschen) gebaut, dann auf Wunsch radikal vereinfacht: **es gibt nur eine einzige Benachrichtigung, die man ein- oder ausschaltet** - kein Verwalten mehrerer Einträge.
+
+**Wichtiger Fund beim Vereinfachen:** Kumas `active`-Feld auf einer Benachrichtigung lässt sich über die API **nicht** wirklich setzen - es wird beim Anlegen immer stillschweigend auf `true` zurückgesetzt, egal was man mitschickt (live gegengetestet: `active:false` geschickt, `active:true` kam zurück). Ein echter "pausieren ohne Config-Verlust"-Schalter existiert in Kuma für einzelne Benachrichtigungen also nicht.
+
+**Lösung:** Der Schalter wird über Anlegen/Löschen simuliert. "Aus" löscht die Benachrichtigung komplett aus Kuma (stoppt sofort alle Alerts), "Ein" legt sie mit der zuletzt gespeicherten URL neu an. Headpilot merkt sich die Webhook-URL selbst lokal (`data/notification-config.json`, analog zu sshVault.js, aber ohne Verschlüsselung - Kuma selbst speichert dieselbe URL ohnehin im Klartext), damit man sie beim Wiedereinschalten nicht erneut eintippen muss. Anhand eines festen Namens (`Headpilot Discord`) identifiziert, damit andere, manuell in Kuma angelegte Benachrichtigungen (der Nutzer hatte bereits zwei eigene: "My Discord Alert (1)" und "Test") unangetastet bleiben.
+
+**Backend** ([server.js](server.js)): `GET/POST /api/status/notification` (Singular!). Live gegen die echte Instanz getestet: Ein → Bearbeiten (URL ändern, bleibt dieselbe ID, kein Duplikat) → Aus (gelöscht) → die zwei bereits vorhandenen echten Benachrichtigungen des Nutzers waren danach unverändert vorhanden. `NOTIFICATION_SAVE` im Audit-Log.
+
+**Frontend**: Kein Modal, keine Liste mehr - eine einzelne Karte im Status-Reiter ([status.html](public/views/status.html)) mit Checkbox "Aktiviert", Webhook-URL-Feld und einem "Speichern"-Button.
+
+## 11. Bugfix: Dienst (Monitor) anlegen/bearbeiten schlug fehl ("Cannot read properties of undefined (reading 'every')")
+
+**Symptom:** In Headpilot einen neuen Ping-Dienst für `192.168.178.37` anlegen scheiterte mit `Fehler: Cannot read properties of undefined (reading 'every')`. Derselbe Monitor ließ sich in Kumas eigenem Interface aber problemlos anlegen.
+
+**Root Cause (live nachvollzogen):** Kumas `add`/`editMonitor`-Socket-Handler verarbeiten intern ein deutlich größeres Feld-Set, als Headpilot bisher geschickt hat - Felder für praktisch alle Monitor-Typen (Kafka, RADIUS, gRPC, MQTT, OAuth, Datenbank, ...), unabhängig vom tatsächlich gewählten Typ. Fehlt eines davon im gesendeten Objekt, crasht Kuma intern beim Validieren mit genau dieser Fehlermeldung. Kumas eigenes Frontend schickt immer das komplette Objekt mit allen Feldern - Headpilot schickte bisher nur die drei tatsächlich benötigten (name/url oder hostname/port, interval), daher der Unterschied zum Verhalten in Kumas UI.
+
+Herausgefunden, indem live ein echter, vollständiger Monitor (der bestehende "iPhone"-Ping-Monitor) per `getMonitor` abgerufen und schrittweise auf die tatsächlich nötigen Felder reduziert wurde. Ein reiner Klon dieses Objekts löste dabei einen *zweiten*, andersartigen Fehler aus (SQL: `no column named children_i_ds`) - Kumas Datenbank-Schicht akzeptiert beim Schreiben also umgekehrt bestimmte reine Ausgabe-/Berechnungsfelder nicht, die `getMonitor` aber mitliefert. Per automatisiertem Skript (SQL-Fehler parsen → Feldname snake_case→camelCase konvertieren → Feld entfernen → erneut versuchen) wurde die vollständige Liste dieser abgelehnten Felder ermittelt: `childrenIDs`, `pathName`, `parent`, `forceInactive`, `includeSensitiveData`, `maintenance`, `screenshot`, `tags` - sowie zusätzlich `id`, aber **nur** beim Anlegen (`add`); `editMonitor` braucht `id` im Objekt selbst, um den richtigen Datensatz zu finden, und schlägt ohne es mit `Undefined binding(s) detected ... id = ?` fehl (das war zunächst ein eigener Fehler in dieser Fix-Iteration, da `id` versehentlich mit in die gemeinsame Ausschlussliste aufgenommen wurde).
+
+**Fix** ([server.js](server.js)):
+- `kumaMonitorDefaults({type, interval})`: liefert neutrale Default-Werte für **alle** von Kuma verarbeiteten Monitor-Felder, nicht nur die drei von Headpilot angebotenen Typen (http/port/ping).
+- `buildKumaMonitorPayload(...)`: baut daraus das komplette `add`-Payload für den gewünschten Typ.
+- `KUMA_MONITOR_READONLY_FIELDS` + `stripReadonlyMonitorFields(monitor)`: entfernt die von Kumas DB-Schicht abgelehnten Felder vor jedem Schreibzugriff (ohne `id` - siehe oben).
+- `applyKumaMonitorFields(existing, {...})`: überträgt beim Bearbeiten nur die geänderten Formularfelder auf das vollständige, per `getMonitor` geladene Bestandsobjekt (Kumas `editMonitor` erwartet immer das komplette Objekt, kein Teil-Update) und bereinigt es anschließend über `stripReadonlyMonitorFields`.
+
+**Live verifiziert:** Anlegen von HTTP-, Port- und Ping-Monitoren erfolgreich, Bearbeiten (Umbenennen) eines bestehenden Monitors erfolgreich, alle dabei angelegten Test-Monitore (`HEADPILOT-*-TEST*`) wieder gelöscht. Kumas finaler Monitor-Bestand nach dem Test unverändert: `Headpilot Dashboard`, `Home Assistant Webpage`, `iPhone` (alle drei echte, bereits vorher vorhandene Geräte des Nutzers).
+
 ## Neue/geänderte Dateien im Überblick
 
 | Datei | Änderung |
 |---|---|
-| `server.js` | Docker-Scan, SSH-Vault-Routen, Ping-Endpoint, Kuma-Integration (Status + CRUD), Subnet-Routes-CRUD, Pre-Auth-Key-Fix, Audit-Log-Aufrufe, Sicherheitsnetz |
+| `server.js` | Docker-Scan, SSH-Vault-Routen, Ping-Endpoint, Kuma-Integration (Status + CRUD + Discord-Benachrichtigungen), Subnet-Routes-CRUD, Pre-Auth-Key-Fix, Audit-Log-Aufrufe, Sicherheitsnetz |
 | `audit.js` | **Neu** – Postgres-Audit-Log (pg-Pool, logAudit/getAuditLog) |
 | `sshVault.js` | **Neu** – verschlüsselte SSH-Zugangsdaten-Speicherung |
-| `public/style.css` | Komplett überarbeitet (minimalistisch), neue Sektionen für Docker/Status/Ping/Modal/Routes, `--warning`-Variable |
-| `public/js/app.js` | View-Router mit Cache/Transitions, Docker-Scan-UI, Ping, Kuma-Status-UI inkl. CRUD-Modal, Keys-Grid-Redesign + ID-Fix, Subnet-Routes-UI, Audit-Log-Feed auf der Startseite |
+| `public/style.css` | Komplett überarbeitet (minimalistisch), neue Sektionen für Docker/Status/Ping/Modal/Routes/Audit-Feed/Discord-Benachrichtigungs-Karte, `--warning`-Variable |
+| `public/js/app.js` | View-Router mit Cache/Transitions, Docker-Scan-UI, Ping, Kuma-Status-UI inkl. CRUD-Modal, Keys-Grid-Redesign + ID-Fix, Subnet-Routes-UI, Audit-Log-Feed auf der Startseite, Discord-Benachrichtigungs-Toggle |
 | `public/index.html` | Neue Nav-Einträge (Docker, Status, Subnet Routes), SSH- und Monitor-Modal |
 | `public/views/docker.html` | **Neu** |
 | `public/views/status.html` | **Neu** |

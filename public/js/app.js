@@ -257,6 +257,7 @@ async function initStatusView() {
     if (statusPollTimer) clearInterval(statusPollTimer);
 
     await fetchStatus();
+    fetchNotificationConfig();
 
     // Alle 30s aktualisieren - bricht sich selbst ab, sobald die Status-Ansicht
     // verlassen wurde (erkennbar daran, dass #status-content nicht mehr existiert)
@@ -432,6 +433,83 @@ async function deleteMonitor(monitorId, name) {
         fetchStatus();
     } catch (err) {
         alert('Fehler: ' + err.message);
+    }
+}
+
+// --- DISCORD-BENACHRICHTIGUNG (Status-Reiter) ---
+// Bewusst nur eine einzige, ein-/ausschaltbare Benachrichtigung - kein Verwalten mehrerer.
+
+async function fetchNotificationConfig() {
+    const card = document.getElementById('notification-card');
+    if (!card) return;
+
+    try {
+        const res = await fetch('/api/status/notification');
+        const data = await res.json();
+
+        if (!data.configured) {
+            card.hidden = true;
+            return;
+        }
+
+        card.hidden = false;
+        document.getElementById('notification-enabled').checked = !!data.enabled;
+        document.getElementById('notification-webhook-input').value = data.webhookUrl || '';
+        updateNotificationStatusText(!!data.enabled);
+    } catch (e) {
+        card.hidden = true;
+    }
+}
+
+function updateNotificationStatusText(enabled) {
+    const el = document.getElementById('notification-status-text');
+    if (el) el.textContent = enabled ? 'Aktiviert' : 'Deaktiviert';
+}
+
+// Wird direkt beim Umlegen des Schalters ausgelöst - speichert sofort, kein Klick auf
+// "Speichern" nötig, um die Benachrichtigung ein-/auszuschalten.
+async function handleNotificationToggle() {
+    const checkbox = document.getElementById('notification-enabled');
+    const enabled = checkbox.checked;
+    const webhookUrl = document.getElementById('notification-webhook-input').value.trim();
+
+    if (enabled && !webhookUrl) {
+        alert('Bitte zuerst eine Discord-Webhook-URL eintragen und speichern.');
+        checkbox.checked = false;
+        return;
+    }
+
+    try {
+        const res = await fetch('/api/status/notification', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled, webhookUrl })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Speichern fehlgeschlagen.');
+        updateNotificationStatusText(enabled);
+    } catch (e) {
+        checkbox.checked = !enabled; // Schalter zurücksetzen, da es nicht geklappt hat
+        alert('Fehler: ' + e.message);
+    }
+}
+
+// Speichert die Webhook-URL (z.B. beim Ändern) - der Ein/Aus-Zustand bleibt dabei wie er ist
+async function saveNotificationConfig() {
+    const enabled = document.getElementById('notification-enabled').checked;
+    const webhookUrl = document.getElementById('notification-webhook-input').value.trim();
+
+    try {
+        const res = await fetch('/api/status/notification', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled, webhookUrl })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Speichern fehlgeschlagen.');
+        alert('Gespeichert.');
+    } catch (e) {
+        alert('Fehler: ' + e.message);
     }
 }
 
