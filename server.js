@@ -8,19 +8,24 @@ const fs = require('fs');
 const path = require('path');
 const audit = require('./audit');
 
-// Liest den eingeloggten Benutzernamen aus dem gespeicherten OIDC-id_token (JWT).
-// Keine erneute Signatur-Prüfung nötig - das Token wurde bereits einmal beim Token-
-// Austausch mit Keycloak (über HTTPS + Client-Secret) verifiziert, wir lesen hier nur
-// den bereits vertrauenswürdigen Claim aus der Session wieder aus.
-function getActor(req) {
+// Dekodiert das im Login-Callback gespeicherte OIDC-id_token (JWT) und liefert dessen Payload.
+// Keine erneute Signatur-Prüfung nötig - das Token wurde bereits einmal beim Token-Austausch
+// mit Keycloak (über HTTPS + Client-Secret) verifiziert, wir lesen hier nur die bereits
+// vertrauenswürdigen Claims aus der Session wieder aus.
+function decodeIdTokenPayload(req) {
     try {
         const idToken = req.session?.tokens?.id_token;
-        if (!idToken) return 'unknown';
-        const payload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString('utf8'));
-        return payload.preferred_username || payload.email || 'unknown';
+        if (!idToken) return null;
+        return JSON.parse(Buffer.from(idToken.split('.')[1], 'base64').toString('utf8'));
     } catch (e) {
-        return 'unknown';
+        return null;
     }
+}
+
+// Liest den eingeloggten Benutzernamen fürs Audit-Log aus (siehe decodeIdTokenPayload oben).
+function getActor(req) {
+    const payload = decodeIdTokenPayload(req);
+    return payload?.preferred_username || payload?.email || 'unknown';
 }
 
 // Workaround für ein bekanntes macOS/Tailscale-Problem: Wenn Tailscale MagicDNS die DNS-
@@ -170,6 +175,16 @@ app.get('/dashboard', (req, res) => {
 // 3. GESCHÜTZTE API-ROUTEN (Alle ab hier erfordern eine gültige Session)
 // =========================================================================
 
+// Liefert den aktuell eingeloggten Benutzer fürs Frontend (Anzeige in der Sidebar) -
+// dieselben Claims, die getActor() auch fürs Audit-Log verwendet.
+app.get('/api/me', (req, res) => {
+    const payload = decodeIdTokenPayload(req);
+    res.json({
+        username: payload?.preferred_username || payload?.email || null,
+        name: payload?.name || null
+    });
+});
+
 // Route: Holt alle Nodes von Headscale
 app.get('/api/nodes', async (req, res) => {
     try {
@@ -259,14 +274,29 @@ app.post('/api/nodes/ping', (req, res) => {
     });
 });
 
-// 1. Alle Benutzer abrufen
+// 1. Alle Benutzer abrufen - inkl. Anzahl der ihnen zugeordneten Geräte, damit die Benutzer-
+// Seite mehr Kontext zeigen kann als nur den nackten Namen. Schlägt das Node-Fetch fehl,
+// wird die Anzahl einfach weggelassen (0), statt die ganze Seite zu blockieren.
 app.get('/api/users', async (req, res) => {
     try {
-        const response = await fetch(`${HEADSCALE_URL}/api/v1/user`, {
-            headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
-        });
-        if (!response.ok) throw new Error(`Fehler: ${response.status}`);
-        res.json(await response.json());
+        const [userResponse, nodeResponse] = await Promise.all([
+            fetch(`${HEADSCALE_URL}/api/v1/user`, { headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' } }),
+            fetch(`${HEADSCALE_URL}/api/v1/node`, { headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' } })
+        ]);
+        if (!userResponse.ok) throw new Error(`Fehler: ${userResponse.status}`);
+        const userData = await userResponse.json();
+
+        const nodeCountByUserId = {};
+        if (nodeResponse.ok) {
+            const nodeData = await nodeResponse.json();
+            (nodeData.nodes || []).forEach(n => {
+                const uid = n.user?.id;
+                if (uid) nodeCountByUserId[uid] = (nodeCountByUserId[uid] || 0) + 1;
+            });
+        }
+
+        const users = (userData.users || []).map(u => ({ ...u, nodeCount: nodeCountByUserId[u.id] || 0 }));
+        res.json({ users });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -1065,6 +1095,51 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
 });
 
 // =========================================================================
+// NETZWERK-GRAPH
+// =========================================================================
+// Liefert die Rohdaten für die grafische Tailnet-Übersicht ("Netzwerk"-Reiter): welche Nodes
+// sind registriert (inkl. online/offline, Besitzer, Kontaktdaten) und welche Subnet-Routes sind
+// für welchen Node genehmigt. WICHTIG: Headscale/Tailscale ist ein Full-Mesh-Netzwerk - es gibt
+// keine zentral gespeicherte Peer-zu-Peer-Verbindungsinfo. Das hier ist also KEINE Live-
+// Verbindungsvisualisierung, sondern zeigt ausschließlich reale Registrierungs- und Routing-
+// Daten, wie sie auch "headscale nodes list"/"list-routes" liefern würden.
+//
+// Docker-Dienste, Kuma-Monitore und eine nmap-basierte LAN-Erkennung hinter den Subnet-Routes
+// waren hier testweise mit dabei, funktionierten jeweils technisch, wurden aber auf Wunsch
+// wieder entfernt - optisch hat keine der beiden Erweiterungen überzeugt.
+app.get('/api/network-graph', async (req, res) => {
+    try {
+        const response = await fetch(`${HEADSCALE_URL}/api/v1/node`, {
+            headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Fehler ${response.status}: ${errorText}`);
+        }
+        const data = await response.json();
+
+        const nodes = [];
+        const routes = [];
+        (data.nodes || []).forEach(n => {
+            nodes.push({
+                id: n.id,
+                name: n.givenName || n.name,
+                online: !!n.online,
+                lastSeen: n.lastSeen || null,
+                expiry: n.expiry || null,
+                ipAddresses: n.ipAddresses || [],
+                owner: n.user?.displayName || n.user?.name || null
+            });
+            // Nur genehmigte Routes gehören ins Bild - eine bloß angekündigte, aber (noch)
+            // nicht freigegebene Route führt ja tatsächlich zu keinem Traffic.
+            (n.approvedRoutes || []).forEach(cidr => routes.push({ nodeId: n.id, cidr }));
+        });
+
+        res.json({ nodes, routes });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+// =========================================================================
 // AUDIT LOG
 // =========================================================================
 // Gleiches Drei-Zustands-Prinzip wie bei Kuma: "configured: false" ohne DATABASE_URL
@@ -1084,6 +1159,12 @@ app.get('/api/audit', async (req, res) => {
         console.error('Audit-Log nicht erreichbar:', error.message);
         res.json({ configured: true, available: false });
     }
+});
+
+app.post('/api/test-alarm-event', (req, res) => {
+  const receivedAt = Date.now();
+  console.log('[TEST-ALARM] Empfangen:', JSON.stringify(req.body), 'um', receivedAt);
+  res.json({ status: 'received', receivedAt });
 });
 
 // Server starten

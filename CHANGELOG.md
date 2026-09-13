@@ -150,21 +150,106 @@ Herausgefunden, indem live ein echter, vollständiger Monitor (der bestehende "i
 
 **Live verifiziert:** Anlegen von HTTP-, Port- und Ping-Monitoren erfolgreich, Bearbeiten (Umbenennen) eines bestehenden Monitors erfolgreich, alle dabei angelegten Test-Monitore (`HEADPILOT-*-TEST*`) wieder gelöscht. Kumas finaler Monitor-Bestand nach dem Test unverändert: `Headpilot Dashboard`, `Home Assistant Webpage`, `iPhone` (alle drei echte, bereits vorher vorhandene Geräte des Nutzers).
 
+## 12. Netzwerk-Reiter (Graph-Visualisierung des Tailnets)
+
+Neuer Nav-Bereich "Netzwerk" (unter Headscale einsortiert, da rein auf Headscale-Registrierungsdaten basierend), zeigt Nodes und ihre genehmigten Subnet-Routes als interaktiven Graphen: Headscale im Zentrum, davon Linien zu jedem registrierten Node, von Nodes mit genehmigter Route eine gestrichelte Linie zu einem eigenen Route-Knoten mit der CIDR als Label.
+
+**Wichtige Einschränkung (bewusst so gebaut):** Das ist **keine** Live-Verbindungsvisualisierung. Headscale/Tailscale ist ein Full-Mesh-Netzwerk - es gibt keine zentral gespeicherte Peer-zu-Peer-Verbindungsinfo, die man abfragen könnte. Der Graph zeigt ausschließlich reale Registrierungs- (welche Nodes gibt es, online/offline, letzter Kontakt, IP) und Routing-Daten (genehmigte Subnet-Routes), wie sie auch über `headscale nodes list` abrufbar wären. Das steht auch als Hinweistext direkt im UI.
+
+**Backend** ([server.js](server.js)): `GET /api/network-graph`, baut aus der bestehenden Node-Liste `{ nodes: [{id, name, online, lastSeen, ipAddresses}], routes: [{nodeId, cidr}] }` (nur *genehmigte* Routes - eine bloß angekündigte, aber nicht freigegebene Route führt zu keinem tatsächlichen Traffic und gehört daher nicht ins Bild). Live gegen die echte Instanz getestet (6 registrierte Nodes, davon einer mit einer genehmigten Route).
+
+**Frontend**: [network.html](public/views/network.html) (neu) + `initNetworkView()` in [app.js](public/js/app.js). Nutzt [vis-network](https://visjs.github.io/vis-network/) 10.1.2 über CDN (cdnjs, kein npm nötig). Farben werden direkt aus den bestehenden CSS-Variablen gelesen (`--success`/`--border-strong` für online/offline, `--accent` für den Headscale-Knoten), damit der Graph ohne eigene Farbpalette auskommt. Klick auf einen Geräte-Knoten (nicht auf Headscale oder eine Route) zeigt ein Popup mit Status, IP und letztem Kontakt - bewusst ein eigenes, an den restlichen App-Stil angeglichenes Popup-Element statt vis-networks Standard-Hover-Tooltip, da laut Vorgabe ein Klick das Popup auslösen soll. Ohne registrierte Nodes erscheint statt eines leeren Graphen ein Hinweistext.
+
+**Bugfix + Redesign für den Präsentations-Einsatz:** Ursprünglich per Physik-Simulation (`barnesHut`) angeordnet - dabei zwei Probleme entdeckt: (1) `.network-empty-hint { display: flex }` überschrieb das `hidden`-Attribut (derselbe Fehlerklasse wie beim SSH-Modal, siehe Abschnitt 1) - der "Keine Geräte registriert"-Hinweis war dadurch immer sichtbar, auch mit echten Nodes im Graph. (2) Ohne fest vorgegebene Koordinaten würfelt vis-network bei jedem Laden neue Startpositionen aus - der Graph sah bei jedem Seitenaufruf anders aus, was für eine Live-Präsentation störend war. Fix: `[hidden]`-Regel ergänzt; die Physik-Simulation komplett durch feste, deterministische Koordinaten ersetzt (Geräte-Nodes gleichmäßig im Kreis um Headscale, nach ID sortiert; Routes am selben Winkel wie ihr Node, weiter außen, bei mehreren Routes leicht aufgefächert). Dadurch sieht der Graph bei jedem Neuladen exakt identisch aus, bleibt aber weiterhin frei ziehbar. Der zunächst ergänzte "Neu anordnen"-Button wurde auf Wunsch wieder entfernt.
+
+## 13. Netzwerk-Graph: Docker-Dienste und Kuma-Monitore als Ebenen (gebaut, dann wieder entfernt)
+
+Testweise um zwei per Toggle zuschaltbare Ebenen erweitert: laufende Docker-Container (über die bestehende SSH-Vault-Anbindung) und Uptime-Kuma-Monitore, jeweils dem passenden Node zugeordnet (Kuma per Text-Abgleich auf IP/Gerätename, nicht zuordenbare Monitore an einem eigenen "Kuma"-Hub). Funktionierte technisch (live gegen den echten NAS-Node mit 20 Docker-Containern und die echte Kuma-Instanz getestet), wurde aber auf Wunsch wieder komplett entfernt - optisch hat es nicht überzeugt.
+
+**Für später festgehalten, falls das Thema nochmal aufkommt:** Das eigentliche Problem war gelöst - ein einzelner Host kann sehr viele Docker-Container haben (20 im Live-Test), eine direkte 1:1-Darstellung als Knoten wäre unlesbar. Funktionierender Ansatz dafür war ein Schwellenwert (bis 3 Elemente direkt als Punkte, darüber eine einzige einklappbare Gruppe mit Anzahl im Label, die sich per Klick fächerförmig aufklappt). Falls Docker/Kuma im Graphen nochmal gewünscht werden, lohnt es sich eher, an der *Optik* der Gruppen/Zweige anzusetzen (z.B. weniger zusätzliche Farben/Formen, engere Integration ins bestehende Kreis-Layout) statt an der zugrundeliegenden Logik - die hat funktioniert.
+
+## 14. Netzwerk-Graph: LAN-Erkennung per nmap-Scan (gebaut, dann wieder entfernt)
+
+Testweise um eine automatische Erkennung der erreichbaren Geräte hinter einer genehmigten Subnet-Route ergänzt: per `execFile('nmap', [...])` (nie als Shell-String, CIDR streng validiert, nur tatsächlich genehmigte Routes scanbar, 5-Minuten-Cache). Funktionierte technisch einwandfrei - live gegen das echte Heimnetz getestet (192.168.178.0/24, 4 gefundene Geräte) - wurde aber auf Wunsch wieder komplett entfernt.
+
+**Für später festgehalten, falls das Thema nochmal aufkommt:** Ein echter Testlauf zeigte, dass ein normaler, erfolgreicher `/24`-Scan bereits 28-32 Sekunden braucht (weil `--host-timeout` nur einen einzelnen nicht antwortenden Host begrenzt, nicht die Gesamtlaufzeit) - ein Node-Timeout müsste also spürbar über den vorgegebenen 30s liegen, um normale Scans nicht selbst abzuwürgen. Falls das Feature nochmal gewünscht wird, ist der sicherheitsrelevante Teil (Validierung, execFile-Array, Route-Whitelist, Cache) bereits durchdacht und live getestet - die genaue Umsetzung liegt in der Git-Historie.
+
+## 15. Netzwerk-Graph: mehr Details direkt sichtbar
+
+Der Graph wirkte ohne die LAN-Erkennung wieder recht leer ("blank") - dafür jetzt mehr Kontext direkt im Bild, ohne die entfernten Features zurückzuholen:
+
+- **Kennzahlen-Leiste über dem Graphen** ([network.html](public/views/network.html)): Anzahl Geräte, davon online, sowie Anzahl genehmigter Routes - auf einen Blick sichtbar, bevor man überhaupt einen Knoten anklickt.
+- **Zweizeiliges Node-Label**: Name und primäre IP direkt unter dem Knoten (z.B. "elias-nas" / "100.64.0.4"), nicht erst nach einem Klick.
+- **Erweitertes Klick-Popup**: zusätzlich zu Status/IP/letztem Kontakt jetzt auch **Besitzer** (Headscale-User, der das Gerät registriert hat) und **Sitzungsablauf** (`expiry`) - beides bereits Teil der echten Headscale-Node-Antwort, aber bisher ungenutzt (live gegen die echte Instanz geprüft: liefert z.B. korrekt "Elias Osarumwense" als Besitzer für alle aktuell registrierten Geräte).
+
+**Backend** ([server.js](server.js)): `/api/network-graph` liefert pro Node jetzt zusätzlich `owner` (`user.displayName` bzw. `user.name`) und `expiry`.
+
+## 16. Netzwerk-Graph auf die Startseite verschoben, eigener Nav-Reiter entfernt
+
+Der Netzwerk-Graph war als eigener Vollbild-Reiter ("Netzwerk") ohne die Docker-/Kuma-/LAN-Erweiterungen zu leer/wenig genutzt - jetzt stattdessen als zusätzliche, volle Breite einnehmende Kachel direkt auf der Startseite (analog zur "Letzte Aktivität"-Log-Kachel), der eigene Nav-Eintrag ist weg.
+
+- `public/views/network.html` **gelöscht** - der Graph lebt jetzt direkt in [dashboard.html](public/views/dashboard.html) (`.network-graph-card`).
+- Die zwischenzeitlich ergänzte separate Kennzahlen-Leiste (Geräte/Online/Routen) über dem Graphen wurde wieder entfernt (`updateNetworkStats()` in [app.js](public/js/app.js)) - auf der Startseite liefern die ohnehin vorhandenen Stat-Karten ("Registrierte Geräte", "Aktuell Online", "Aktive Routen") exakt dieselben Zahlen bereits mit, eine zweite Anzeige wäre nur Redundanz gewesen.
+- `initNetworkView()` wird jetzt beim Laden der Startseite aufgerufen (zusammen mit `fetchDashboardStats()`/`fetchDashboardAuditLog()`), nicht mehr über einen eigenen `loadView('network')`-Zweig.
+- Graph-Höhe von der ehemals viewport-abhängigen Formel (`min(640px, calc(100vh - 260px))` - war für eine Vollbild-Seite gedacht) auf eine feste, kachel-taugliche Höhe (380px) vereinfacht; der doppelte Schatten (Kachel + Graph-Rahmen) wurde entfernt, damit sich der Graph optisch sauber in die bestehende `.stat-card`-Optik einfügt statt wie ein eigenständiges Element zu wirken.
+- **Layout-Feinschliff:** Netzwerk-Graph und "Letzte Aktivität" teilen sich jetzt eine gemeinsame Zeile statt jeweils die volle Breite zu belegen - Graph 2/3, Log-Feed 1/3 (`.network-graph-card { grid-column: span 2 }`, `.audit-feed-card { grid-column: span 1 }`, direkt aufeinanderfolgend im Grid). `.audit-log-console` bekam dafür `flex: 1` statt einer festen `max-height`, damit der Log-Feed die Kachel exakt bis zur Höhe des Graphen daneben ausfüllt statt darunter Leerraum zu lassen.
+
+## 17. Bugfix: Headscale-Knoten nicht exakt mittig im Netzwerk-Graph
+
+**Symptom:** Der schwarze "Headscale"-Punkt saß nicht exakt in der Mitte der Graph-Kachel.
+
+**Ursache:** `network.fit()` zentriert auf den Mittelpunkt der Bounding-Box **aller** Knoten - bei ungleich verteilten Routes (z.B. nur ein Node mit einer Route, alle anderen ohne) liegt dieser Mittelpunkt nicht bei Headscale selbst (immer fest bei `x:0, y:0`), sondern leicht in Richtung der vorhandenen Route(n) verschoben.
+
+**Fix** ([app.js](public/js/app.js)): `fit()` durch ein explizites `moveTo({ position: {x:0, y:0}, scale })` ersetzt - zentriert immer exakt auf Headscale. Der Zoom-Faktor wird selbst berechnet (größte Distanz irgendeines Knotens zu `(0,0)`, passend zur Kachel-Größe skaliert), damit trotzdem alle Knoten sichtbar bleiben. Durchgerechnet mit der echten Node/Route-Konstellation (6 Geräte, 1 Route) - der am weitesten entfernte Punkt landet exakt am berechneten Rand, Headscale exakt im Zentrum.
+
+**Zoom-Feinschliff (zwei Nachbesserungsrunden):** Der berechnete Zoom wirkte danach zu weit herausgezoomt. Grund: die Kachel ist deutlich breiter als hoch, die Skalierung richtet sich aber (um vertikales Abschneiden zu vermeiden) nach der kleineren der beiden Dimensionen (der Höhe) - dadurch bleibt der Großteil der verfügbaren Breite ungenutzt, was optisch wie "viel Leerraum, kleiner Graph" wirkt. Zwei Stellschrauben nachgezogen: der Rand-Puffer (`edgePaddingPx`, erst 50→24, dann 24→18) und die Kachel-Höhe (380px→440px, mehr nutzbare Höhe = mehr Zoom bei gleichbleibendem Seitenverhältnis-Nachteil). Rechnerisch verifiziert: der am weitesten entfernte Knoten liegt mit den finalen Werten bei 202px Abstand vom Zentrum (statt zuvor 166px, davor 140px) - der Sicherheitsabstand zum Rand bleibt dabei exakt `edgePaddingPx`, unabhängig vom gewählten Wert, es wird also nie etwas abgeschnitten.
+
+## 18. Kurzanleitung mit Copy-Befehlen auf der Subnet-Routes-Seite
+
+Headpilot kann Routes nur genehmigen/deaktivieren - das eigentliche Ankündigen einer Route passiert auf dem Zielgerät selbst und war bisher nirgends erklärt. Jetzt eine minimale, eingeklappte Anleitung (natives `<details>`/`<summary>`, kein eigenes JS fürs Auf-/Zuklappen nötig) direkt über der Routes-Liste, mit zwei fertigen Copy-Befehlen:
+
+1. IP-Forwarding aktivieren (Linux, Voraussetzung fürs Routing).
+2. `tailscale up --advertise-routes=<CIDR>` zum Ankündigen der Route.
+
+**Frontend**: [routes.html](public/views/routes.html) (`.route-howto`), neue `.code-box`-Komponente (dunkler Terminal-Look wie beim Audit-Log-Feed) mit "Kopieren"-Button pro Befehl. `copyCodeBox()` in [app.js](public/js/app.js) nutzt `navigator.clipboard.writeText()`, kurzes Feedback direkt am Button ("Kopiert") statt eines zusätzlichen Toasts/Alerts.
+
+## 19. Angemeldeter Benutzer in der Sidebar
+
+Zeigt jetzt unten in der Sidebar (über "Abmelden") an, wer gerade eingeloggt ist - Avatar mit Anfangsbuchstabe + Name/Benutzername, wie bei den meisten Web-Apps üblich.
+
+**Backend** ([server.js](server.js)): Die bestehende `getActor()`-Logik (liest den Benutzernamen aus dem gespeicherten OIDC-`id_token` fürs Audit-Log) wurde in `decodeIdTokenPayload()` aufgeteilt (liefert die komplette Token-Payload) - `getActor()` nutzt das für den Audit-Log-Benutzernamen wie bisher, neu dazu der Endpoint `GET /api/me`, der `{ username, name }` fürs Frontend liefert (keine neue Logik, nur bereits vorhandene, vertrauenswürdige Session-Claims wiederverwendet).
+
+**Frontend**: `fetchCurrentUser()` in [app.js](public/js/app.js) läuft einmalig beim App-Start (nicht bei jedem Reiterwechsel, der Benutzer ändert sich ja währenddessen nicht). Neuer `.sidebar-user`-Block in [index.html](public/index.html), bleibt `hidden`, bis die echten Daten da sind (kein kurzes Aufblitzen eines leeren Avatars) bzw. komplett ausgeblendet, falls aus irgendeinem Grund kein Name ermittelbar ist.
+
+## 20. Benutzerverwaltung: Karten-Grid-Redesign + mehr Details
+
+Die "Benutzer"-Seite war noch die letzte mit einer klassischen Tabelle im Rest-der-App-fremden Stil - jetzt auf dasselbe Karten-Grid wie Nodes/Keys umgestellt (`.node-card`, dieselben Klassen wiederverwendet statt eigener neuer CSS).
+
+**Mehr Details pro Benutzer** (alles, was Headscale tatsächlich zu einem User liefert, live gegen die echte Instanz mit allen 4 vorhandenen Benutzern durchgerechnet):
+- **Geräte-Anzahl**: neu berechnet, indem `GET /api/users` ([server.js](server.js)) zusätzlich die Node-Liste abfragt und pro `user.id` zählt, wie viele Geräte diesem Benutzer gehören (live verifiziert: der Hauptbenutzer mit 6 registrierten Geräten zeigt korrekt "6", die anderen drei Konten ohne eigene Geräte "0").
+- **Anmeldeart**: "OIDC-Login" vs. "Manuell angelegt" (aus dem `provider`-Feld - leer bedeutet meist per `headscale users create` oder vor der OIDC-Einrichtung angelegt).
+- **Anzeigename**: falls über OIDC bekannt (z.B. "Elias Osarumwense" statt nur "elias"), als Untertitel zur Karte.
+- **E-Mail**: nur angezeigt, wenn tatsächlich vorhanden (Headscale liefert bei diesem Setup meist einen leeren String, kein Platzhalter für "nicht vorhanden" nötig).
+- Erstellt-Datum und interne ID weiterhin sichtbar wie zuvor.
+
+**Nebenbei aufgeräumt:** Die generischen, unstyled `table`/`th`/`td`-Regeln und `.action-cell` in [style.css](public/style.css) waren nach diesem Umbau nirgends mehr referenziert (Benutzer war die letzte Seite mit einer echten `<table>`) und wurden entfernt.
+
 ## Neue/geänderte Dateien im Überblick
 
 | Datei | Änderung |
 |---|---|
-| `server.js` | Docker-Scan, SSH-Vault-Routen, Ping-Endpoint, Kuma-Integration (Status + CRUD + Discord-Benachrichtigungen), Subnet-Routes-CRUD, Pre-Auth-Key-Fix, Audit-Log-Aufrufe, Sicherheitsnetz |
+| `server.js` | Docker-Scan, SSH-Vault-Routen, Ping-Endpoint, Kuma-Integration (Status + CRUD + Discord-Benachrichtigungen), Subnet-Routes-CRUD, Netzwerk-Graph-Endpoint (inkl. Besitzer/Sitzungsablauf pro Node), `/api/me`, Benutzer-Endpoint inkl. Geräte-Anzahl, Pre-Auth-Key-Fix, Audit-Log-Aufrufe, Sicherheitsnetz |
 | `audit.js` | **Neu** – Postgres-Audit-Log (pg-Pool, logAudit/getAuditLog) |
 | `sshVault.js` | **Neu** – verschlüsselte SSH-Zugangsdaten-Speicherung |
-| `public/style.css` | Komplett überarbeitet (minimalistisch), neue Sektionen für Docker/Status/Ping/Modal/Routes/Audit-Feed/Discord-Benachrichtigungs-Karte, `--warning`-Variable |
-| `public/js/app.js` | View-Router mit Cache/Transitions, Docker-Scan-UI, Ping, Kuma-Status-UI inkl. CRUD-Modal, Keys-Grid-Redesign + ID-Fix, Subnet-Routes-UI, Audit-Log-Feed auf der Startseite, Discord-Benachrichtigungs-Toggle |
-| `public/index.html` | Neue Nav-Einträge (Docker, Status, Subnet Routes), SSH- und Monitor-Modal |
+| `public/style.css` | Komplett überarbeitet (minimalistisch), neue Sektionen für Docker/Status/Ping/Modal/Routes/Audit-Feed/Discord-Benachrichtigungs-Karte/Netzwerk-Graph, `--warning`-Variable, Sidebar-Kategorie-Labels |
+| `public/js/app.js` | View-Router mit Cache/Transitions, Docker-Scan-UI, Ping, Kuma-Status-UI inkl. CRUD-Modal, Keys-Grid-Redesign + ID-Fix, Subnet-Routes-UI, Audit-Log-Feed auf der Startseite, Discord-Benachrichtigungs-Toggle, Netzwerk-Graph (vis-network) auf der Startseite |
+| `public/index.html` | Neue Nav-Einträge (Docker, Status, Subnet Routes) in zwei Kategorien (Headscale / Weitere Dienste), SSH- und Monitor-Modal, vis-network-CDN-Einbindung |
 | `public/views/docker.html` | **Neu** |
 | `public/views/status.html` | **Neu** |
 | `public/views/routes.html` | **Neu** |
-| `public/views/dashboard.html` | Neue Audit-Log-Feed-Kachel |
+| `public/views/dashboard.html` | Neue Audit-Log-Feed-Kachel, neue Netzwerk-Graph-Kachel |
 | `public/views/keys.html` | Tabelle → Karten-Grid |
+| `public/views/users.html` | Tabelle → Karten-Grid |
 | `.env.example` | **Neu** – dokumentiert alle benötigten Umgebungsvariablen |
 | `.gitignore` | `/data/` (SSH-Vault) ergänzt |
 | `package.json` | `nodemonConfig.ignore` für `data/`, neue Dependency `pg` |

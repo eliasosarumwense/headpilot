@@ -31,7 +31,7 @@ async function loadView(viewName) {
         content.classList.remove('is-switching');
 
         // 5. Die passenden API-Daten laden
-        if (viewName === 'dashboard') { fetchDashboardStats(); fetchDashboardAuditLog(); }
+        if (viewName === 'dashboard') { fetchDashboardStats(); fetchDashboardAuditLog(); initNetworkView(); }
         if (viewName === 'nodes') fetchNodes();
         if (viewName === 'docker') fetchDockerNodes();
         if (viewName === 'status') initStatusView();
@@ -570,62 +570,91 @@ async function deleteNode(id, name) {
 }
 
 async function fetchUsers() {
+    const grid = document.getElementById('users-grid');
+    if (!grid) return;
+    grid.innerHTML = '<p>Lade Benutzer...</p>';
+
     try {
         const res = await fetch('/api/users');
         const data = await res.json();
-        const tbody = document.getElementById('users-table-body');
-        tbody.innerHTML = ''; 
-        if (data.users && data.users.length > 0) {
-            data.users.forEach(u => {
-                // FIX: Wir übergeben bei onclick jetzt u.id UND u.name!
-                tbody.innerHTML += `<tr>
-                    <td>${u.id}</td>
-                    <td><strong>${u.name}</strong></td>
-                    <td>${new Date(u.createdAt).toLocaleString()}</td>
-                    <td class="action-cell">
-                        <button class="btn" onclick="renameUser(${u.id}, '${u.name}')">Umbenennen</button>
-                        <button class="btn btn-danger" onclick="deleteUser(${u.id}, '${u.name}')">Löschen</button>
-                    </td>
-                </tr>`;
-            });
-        } else tbody.innerHTML = '<tr><td colspan="4">Keine Benutzer.</td></tr>';
-    } catch (e) { tbody.innerHTML = '<tr><td colspan="4" style="color:#b91c1c;">Fehler beim Laden!</td></tr>'; }
+        if (!res.ok) throw new Error(data.error || 'Fehler beim Laden.');
+
+        const users = data.users || [];
+        if (users.length === 0) {
+            grid.innerHTML = '<p>Keine Benutzer.</p>';
+            return;
+        }
+
+        grid.innerHTML = users.map(u => {
+            // Anzeigename (falls über OIDC bekannt, z.B. "Elias Osarumwense") als Untertitel
+            // zum technischen Benutzernamen - der bleibt oben, da er überall sonst in der App
+            // als Referenz dient (Node-/Key-Besitzer, Rename-Ziel).
+            const provider = u.provider === 'oidc' ? 'OIDC-Login' : 'Manuell angelegt';
+            const subtitle = u.displayName ? escapeHtml(u.displayName) : provider;
+
+            return `
+            <div class="node-card">
+                <div class="node-card-header">
+                    <div class="node-identity">
+                        <div class="node-name">${escapeHtml(u.name)}</div>
+                        <div class="node-owner">${subtitle}</div>
+                    </div>
+                </div>
+                <div class="node-meta">
+                    <div>Geräte: <strong>${u.nodeCount ?? 0}</strong></div>
+                    <div>Anmeldung: ${provider}</div>
+                    ${u.email ? `<div>E-Mail: ${escapeHtml(u.email)}</div>` : ''}
+                    <div>Erstellt: ${new Date(u.createdAt).toLocaleString()}</div>
+                    <div>ID: ${escapeHtml(u.id)}</div>
+                </div>
+                <div class="node-card-footer">
+                    <button class="btn" onclick="renameUser('${jsStr(u.id)}', '${jsStr(u.name)}')">Umbenennen</button>
+                    <button class="btn btn-danger" onclick="deleteUser('${jsStr(u.id)}', '${jsStr(u.name)}')">Löschen</button>
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        grid.innerHTML = `<p style="color:#b91c1c;">Fehler beim Laden: ${escapeHtml(e.message)}</p>`;
+    }
 }
 
 async function createUser() {
-    const name = document.getElementById('new-user-name').value.trim();
-    if (!name) return alert("Name eingeben!");
+    const input = document.getElementById('new-user-name');
+    const name = input.value.trim();
+    if (!name) return alert('Name eingeben!');
     try {
-        await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-        document.getElementById('new-user-name').value = '';
+        const res = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Fehler beim Erstellen.');
+        input.value = '';
         fetchUsers();
-    } catch (e) { alert("Fehler beim Erstellen"); }
+    } catch (e) {
+        alert('Fehler: ' + e.message);
+    }
 }
 
-// FIX: Die Funktion nimmt jetzt ID und Name an
 async function renameUser(id, oldName) {
     const newName = prompt(`Neuer Name für "${oldName}":`);
-    if (!newName || newName.trim() === "") return;
+    if (!newName || newName.trim() === '') return;
     try {
-        const res = await fetch(`/api/users/${id}/rename/${newName.trim()}`, { method: 'POST' });
-        if (!res.ok) throw new Error("Fehler beim Umbenennen");
+        const res = await fetch(`/api/users/${id}/rename/${encodeURIComponent(newName.trim())}`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Fehler beim Umbenennen.');
         fetchUsers();
-    } catch (e) { alert("Fehler: " + e.message); }
+    } catch (e) {
+        alert('Fehler: ' + e.message);
+    }
 }
 
-// FIX: Die Funktion nimmt jetzt ID und Name an
 async function deleteUser(id, name) {
     if (!confirm(`Benutzer "${name}" wirklich löschen?`)) return;
     try {
-        // Wir schicken die ID an unser Node.js Backend
         const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
         const data = await res.json();
-
-        if (!res.ok) throw new Error(data.error || "Unbekannter Fehler");
-
+        if (!res.ok) throw new Error(data.error || 'Unbekannter Fehler.');
         fetchUsers();
     } catch (e) {
-        alert("Fehler vom Server:\n\n" + e.message);
+        alert('Fehler: ' + e.message);
     }
 }
 
@@ -929,6 +958,201 @@ async function disableRoute(nodeId, route) {
     }
 }
 
+// Kopiert den Befehl aus einer .code-box in die Zwischenablage (Anleitung oben auf der Seite) -
+// kurzes visuelles Feedback am Button selbst, kein zusätzlicher Toast/Alert nötig.
+function copyCodeBox(button) {
+    const code = button.previousElementSibling.textContent;
+    navigator.clipboard.writeText(code).then(() => {
+        const original = button.textContent;
+        button.textContent = 'Kopiert';
+        setTimeout(() => { button.textContent = original; }, 1500);
+    });
+}
+
+// --- API LOGIK: NETZWERK-GRAPH ---
+
+let networkGraphInstance = null; // vis-network kennt kein sinnvolles Re-Init - beim erneuten Öffnen einfach zerstören und neu aufbauen
+let networkGraphNodesById = {}; // Rohdaten der Geräte-Knoten, für das Klick-Popup (nur node-Objekte, nicht Headscale/Routes)
+
+async function initNetworkView() {
+    const container = document.getElementById('network-graph');
+    const emptyHint = document.getElementById('network-empty-hint');
+    if (!container) return;
+
+    if (networkGraphInstance) {
+        networkGraphInstance.destroy();
+        networkGraphInstance = null;
+    }
+    hideNetworkPopup();
+    emptyHint.hidden = true;
+    emptyHint.textContent = 'Keine Geräte registriert.';
+
+    try {
+        const res = await fetch('/api/network-graph');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Fehler beim Laden.');
+
+        const graphNodes = data.nodes || [];
+        const graphRoutes = data.routes || [];
+        networkGraphNodesById = {};
+
+        if (graphNodes.length === 0) {
+            emptyHint.hidden = false;
+            return;
+        }
+
+        // Farben aus den bestehenden CSS-Variablen lesen, statt sie hier hart zu kodieren -
+        // der Graph bleibt so automatisch im gleichen minimalistischen Look wie der Rest der App.
+        const style = getComputedStyle(document.documentElement);
+        const cssVar = (name) => style.getPropertyValue(name).trim();
+        const colorSuccess = cssVar('--success');
+        const colorOffline = cssVar('--border-strong');
+        const colorAccent = cssVar('--accent');
+        const colorSubtle = cssVar('--text-subtle');
+        const colorSurface = cssVar('--surface');
+        const colorText = cssVar('--text');
+        const colorBorder = cssVar('--border-strong');
+        const fontFace = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+        const nodeShadow = { enabled: true, color: 'rgba(0,0,0,0.12)', size: 8, x: 0, y: 2 };
+
+        // Feste, deterministische Positionen statt einer physik-basierten Simulation:
+        // vis-network würfelt ohne eigene Koordinaten bei jedem Laden neue Startpositionen
+        // aus, wodurch der Graph bei jedem Seitenaufruf anders aussieht. Stattdessen werden
+        // die Geräte-Knoten hier gleichmäßig im Kreis um Headscale herum platziert (nach
+        // Node-ID sortiert, damit die Reihenfolge stabil bleibt) - Physik bleibt komplett
+        // aus, damit das Bild bei jedem Neuladen exakt identisch aussieht.
+        const sortedNodes = [...graphNodes].sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+        const nodeRadius = Math.max(200, sortedNodes.length * 32);
+        const routeRadius = nodeRadius + 130;
+        const angleStep = (2 * Math.PI) / sortedNodes.length;
+        const nodeAngle = {}; // nodeId -> Winkel, damit zugehörige Routes am selben "Ast" weiterlaufen
+
+        const nodes = [{
+            id: 'headscale',
+            label: 'Headscale',
+            shape: 'dot',
+            size: 32,
+            x: 0, y: 0, fixed: false,
+            color: { background: colorAccent, border: colorAccent },
+            font: { color: colorSurface, size: 15, face: fontFace, bold: true },
+            shadow: nodeShadow
+        }];
+        const edges = [];
+
+        sortedNodes.forEach((n, i) => {
+            const nodeId = 'node-' + n.id;
+            const angle = i * angleStep - Math.PI / 2; // bei 12 Uhr beginnend, im Uhrzeigersinn
+            nodeAngle[n.id] = angle;
+            const dotColor = n.online ? colorSuccess : colorOffline;
+            const ip = (n.ipAddresses || [])[0];
+            networkGraphNodesById[nodeId] = n;
+            nodes.push({
+                id: nodeId,
+                // Zweizeiliges Label: Name + IP direkt sichtbar, ohne dafür klicken zu müssen -
+                // macht den Graphen auf den ersten Blick informativer, nicht nur ein Namensschild.
+                label: ip ? `${n.name}\n${ip}` : n.name,
+                shape: 'dot',
+                size: 17,
+                x: Math.round(Math.cos(angle) * nodeRadius),
+                y: Math.round(Math.sin(angle) * nodeRadius),
+                color: { background: dotColor, border: dotColor },
+                font: { color: colorText, size: 13, face: fontFace, align: 'center' },
+                shadow: nodeShadow
+            });
+            edges.push({ from: 'headscale', to: nodeId, color: { color: colorBorder }, width: 1.5 });
+        });
+
+        // Routes je Node zählen, um mehrere Routes am selben Node leicht auffächern zu
+        // können - sonst würden sie exakt übereinander liegen.
+        const routesByNode = {};
+        graphRoutes.forEach(r => { (routesByNode[r.nodeId] = routesByNode[r.nodeId] || []).push(r); });
+
+        graphRoutes.forEach((r, i) => {
+            const routeId = 'route-' + r.nodeId + '-' + i;
+            const siblings = routesByNode[r.nodeId] || [r];
+            const indexAmongSiblings = siblings.indexOf(r);
+            const spread = (indexAmongSiblings - (siblings.length - 1) / 2) * 0.3; // ~17° Auffächerung pro weiterer Route
+            const angle = (nodeAngle[r.nodeId] || 0) + spread;
+
+            nodes.push({
+                id: routeId,
+                label: r.cidr,
+                shape: 'box',
+                shapeProperties: { borderRadius: 6 },
+                margin: { top: 9, bottom: 9, left: 12, right: 12 },
+                x: Math.round(Math.cos(angle) * routeRadius),
+                y: Math.round(Math.sin(angle) * routeRadius),
+                color: { background: colorSurface, border: colorSubtle },
+                font: { color: colorText, size: 11, face: fontFace },
+                shadow: nodeShadow
+            });
+            edges.push({ from: 'node-' + r.nodeId, to: routeId, color: { color: colorSubtle }, dashes: true, width: 1 });
+        });
+
+        const visData = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+        const options = {
+            physics: false, // Positionen liegen bereits fest - keine Simulation, kein Zufall, kein Nachwackeln
+            interaction: { hover: false, dragNodes: true, zoomView: true, dragView: true },
+            edges: { smooth: { type: 'continuous', roundness: 0.5 } },
+            nodes: { borderWidth: 2 }
+        };
+
+        networkGraphInstance = new vis.Network(container, visData, options);
+
+        // Bewusst NICHT fit() - das zentriert auf den Schwerpunkt der Bounding-Box aller Knoten,
+        // der bei ungleich verteilten Routes/Nodes nicht mit Headscale (immer bei x:0, y:0)
+        // zusammenfällt. Stattdessen wird hier direkt auf (0,0) zentriert, mit einem selbst
+        // berechneten Zoom, der weiterhin alle Knoten sichtbar hält (größte Distanz zu (0,0)
+        // über alle Knotenpositionen, plus etwas Rand für Knotengröße/Labels).
+        const maxDist = Math.max(1, ...nodes.map(n => Math.hypot(n.x || 0, n.y || 0)));
+        const canvasSize = Math.min(container.clientWidth, container.clientHeight) || 380;
+        const edgePaddingPx = 18; // knapper Rand statt viel ungenutztem Leerraum - wirkte vorher zu weit herausgezoomt
+        const scale = Math.max(0.1, (canvasSize / 2 - edgePaddingPx) / maxDist);
+        networkGraphInstance.moveTo({ position: { x: 0, y: 0 }, scale });
+
+        // Klick auf einen echten Geräte-Knoten zeigt das Detail-Popup, Klick daneben
+        // (leere Fläche, Headscale-Knoten selbst oder eine Route) blendet es wieder aus.
+        networkGraphInstance.on('click', (params) => {
+            const clickedId = params.nodes[0];
+            if (typeof clickedId === 'string' && networkGraphNodesById[clickedId]) {
+                showNetworkPopup(networkGraphNodesById[clickedId], params.pointer.DOM);
+            } else {
+                hideNetworkPopup();
+            }
+        });
+        networkGraphInstance.on('dragStart', hideNetworkPopup);
+        networkGraphInstance.on('zoom', hideNetworkPopup);
+    } catch (e) {
+        emptyHint.hidden = false;
+        emptyHint.textContent = 'Fehler beim Laden: ' + e.message;
+    }
+}
+
+function showNetworkPopup(node, pos) {
+    const popup = document.getElementById('network-node-popup');
+    if (!popup) return;
+    const lastSeen = node.lastSeen ? new Date(node.lastSeen).toLocaleString() : 'unbekannt';
+    const expiry = node.expiry ? new Date(node.expiry).toLocaleString() : 'unbegrenzt';
+    const ip = (node.ipAddresses || [])[0] || 'unbekannt';
+
+    popup.innerHTML = `
+        <div class="network-node-popup-title">${escapeHtml(node.name)}</div>
+        <div class="network-node-popup-row"><span>Status</span><strong>${node.online ? 'Online' : 'Offline'}</strong></div>
+        <div class="network-node-popup-row"><span>IP</span><strong>${escapeHtml(ip)}</strong></div>
+        <div class="network-node-popup-row"><span>Besitzer</span><strong>${escapeHtml(node.owner || 'unbekannt')}</strong></div>
+        <div class="network-node-popup-row"><span>Letzter Kontakt</span><strong>${escapeHtml(lastSeen)}</strong></div>
+        <div class="network-node-popup-row"><span>Sitzung läuft ab</span><strong>${escapeHtml(expiry)}</strong></div>
+    `;
+    popup.style.left = `${pos.x + 16}px`;
+    popup.style.top = `${pos.y}px`;
+    popup.hidden = false;
+}
+
+function hideNetworkPopup() {
+    const popup = document.getElementById('network-node-popup');
+    if (popup) popup.hidden = true;
+}
+
 // --- API LOGIK: AUDIT LOG ---
 
 // Zeigt die letzten Audit-Log-Einträge als kompakten Log-Feed auf der Startseite an -
@@ -1121,4 +1345,24 @@ function renderDockerContainers(bodyDiv, summarySpan, containers) {
 }
 
 // Wenn das Skript geladen ist, starte mit der "nodes" Ansicht
-window.onload = () => loadView('dashboard');
+// Zeigt den eingeloggten Benutzer unten in der Sidebar an (Name/Benutzername + Avatar mit
+// Anfangsbuchstabe) - läuft einmalig beim Laden der App, nicht bei jedem Reiterwechsel, da
+// sich der eingeloggte Benutzer währenddessen ohnehin nicht ändert.
+async function fetchCurrentUser() {
+    const box = document.getElementById('sidebar-user');
+    if (!box) return;
+    try {
+        const res = await fetch('/api/me');
+        const data = await res.json();
+        const display = data.name || data.username;
+        if (!display) return; // kein Claim gefunden - Sidebar bleibt einfach ohne Benutzeranzeige
+
+        document.getElementById('sidebar-user-avatar').textContent = display.charAt(0);
+        document.getElementById('sidebar-user-name').textContent = display;
+        box.hidden = false;
+    } catch (e) {
+        // Anzeige ist rein informativ - ein Fehler hier darf die App nicht stören
+    }
+}
+
+window.onload = () => { loadView('dashboard'); fetchCurrentUser(); };

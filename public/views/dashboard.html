@@ -46,9 +46,14 @@
     /* Einziger Farbakzent: kritische Warnung bei bald ablaufenden Sitzungen/Keys */
     .color-danger { color: var(--danger) !important; }
 
-    /* Log-Feed-Kachel: spannt die volle Breite des Grids statt einer Spalte */
+    /* Netzwerk-Graph und Log-Feed teilen sich eine gemeinsame Zeile: Graph 2/3, Log-Feed 1/3
+       der Breite (bei 3 Spalten insgesamt) - müssen dafür im HTML direkt aufeinander folgen. */
+    .network-graph-card {
+        grid-column: span 2;
+    }
+
     .audit-feed-card {
-        grid-column: 1 / -1;
+        grid-column: span 1;
     }
 </style>
 
@@ -87,6 +92,20 @@
         <h3>Aktive Routen</h3>
         <div class="stat-number" id="stat-routes">-</div>
         <div class="stat-details" id="detail-routes">Lade...</div>
+    </div>
+
+    <div class="stat-card network-graph-card">
+        <h3>Netzwerk</h3>
+        <div class="network-graph-wrap">
+            <div id="network-graph" class="network-graph"></div>
+            <p id="network-empty-hint" class="network-empty-hint" hidden>Keine Geräte registriert.</p>
+            <div id="network-node-popup" class="network-node-popup" hidden></div>
+        </div>
+        <div class="network-legend">
+            <span class="network-legend-item"><span class="status-dot online"></span> Online</span>
+            <span class="network-legend-item"><span class="status-dot"></span> Offline</span>
+            <span class="network-legend-item"><span class="network-legend-route-icon"></span> Subnet-Route</span>
+        </div>
     </div>
 
     <div class="stat-card audit-feed-card">

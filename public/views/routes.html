@@ -1,6 +1,19 @@
 <h1>Subnet Routes</h1>
 <p class="subtitle">Von Geräten per --advertise-routes angekündigte Subnetze genehmigen oder deaktivieren.</p>
 
+<details class="route-howto">
+    <summary>Anleitung: Route aktivieren</summary>
+    <p>Auf dem Zielgerät ausführen (CIDR anpassen), danach unten hier genehmigen:</p>
+    <div class="code-box">
+        <code>sudo sysctl -w net.ipv4.ip_forward=1 net.ipv6.conf.all.forwarding=1</code>
+        <button class="code-copy-btn" onclick="copyCodeBox(this)">Kopieren</button>
+    </div>
+    <div class="code-box">
+        <code>sudo tailscale up --advertise-routes=192.168.1.0/24</code>
+        <button class="code-copy-btn" onclick="copyCodeBox(this)">Kopieren</button>
+    </div>
+</details>
+
 <div id="routes-content">
     <div class="status-grid" id="routes-grid">
         <div class="status-card status-skeleton"></div>

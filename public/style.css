@@ -105,6 +105,44 @@ body {
     border-top: 1px solid var(--sidebar-border);
 }
 
+.sidebar-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    margin-bottom: 4px;
+}
+
+/* Wie an mehreren Stellen in dieser App: eine Klasse mit "display: flex" überschreibt sonst
+   das [hidden]-Attribut (Autoren-CSS schlägt UA-Default bei gleicher Spezifität). */
+.sidebar-user[hidden] {
+    display: none;
+}
+
+.sidebar-user-avatar {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--sidebar-hover);
+    color: var(--sidebar-text-active);
+    font-size: 0.75rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-transform: uppercase;
+}
+
+.sidebar-user-name {
+    font-size: 0.85rem;
+    color: var(--sidebar-text-active);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .btn-logout {
     display: flex;
     align-items: center;
@@ -155,7 +193,7 @@ body {
 }
 
 /* =========================================================================
-   CARDS & TABLES
+   CARDS
    ========================================================================= */
 .card {
     background: var(--surface);
@@ -163,31 +201,6 @@ body {
     border-radius: var(--radius);
     padding: 22px;
     box-shadow: var(--shadow);
-}
-
-table {
-    width: 100%;
-    border-collapse: collapse;
-}
-
-th, td {
-    padding: 13px 14px;
-    border-bottom: 1px solid var(--border);
-    text-align: left;
-    font-size: 0.88rem;
-}
-
-th {
-    background-color: transparent;
-    color: var(--text-subtle);
-    font-weight: 600;
-    text-transform: uppercase;
-    font-size: 0.72rem;
-    letter-spacing: 0.5px;
-}
-
-tr:last-child td {
-    border-bottom: none;
 }
 
 code {
@@ -313,12 +326,6 @@ code {
 .btn-warning:active,
 .btn-expire:active {
     transform: scale(0.97);
-}
-
-.action-cell {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
 }
 
 /* =========================================================================
@@ -843,6 +850,65 @@ code {
 }
 
 /* =========================================================================
+   ANLEITUNG MIT COPY-BEFEHLEN (Subnet Routes) - eingeklappt per natives <details>,
+   damit sie nicht im Weg steht, aber ohne eigenes JS für Auf-/Zuklappen auskommt.
+   ========================================================================= */
+.route-howto {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 14px 18px;
+    margin-bottom: 20px;
+}
+
+.route-howto summary {
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--text);
+}
+
+.route-howto p {
+    margin: 10px 0 8px;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.code-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: #0b0b0c;
+    border-radius: 6px;
+    padding: 9px 12px;
+    margin-bottom: 8px;
+}
+
+.code-box code {
+    color: #d4d4d8;
+    font-size: 0.78rem;
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+.code-box .code-copy-btn {
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid #3f3f46;
+    color: #d4d4d8;
+    border-radius: 5px;
+    padding: 4px 10px;
+    font-size: 0.72rem;
+    cursor: pointer;
+}
+
+.code-box .code-copy-btn:hover {
+    background: #232328;
+}
+
+/* =========================================================================
    AUDIT-LOG-FEED (Startseite): klassischer, dunkler Log-/Terminal-Look -
    bewusst unabhängig vom Rest der (hellen) App, genau wie man es von Logs kennt.
    ========================================================================= */
@@ -850,7 +916,8 @@ code {
     background: #0b0b0c;
     border-radius: var(--radius);
     padding: 14px 16px;
-    max-height: 260px;
+    flex: 1; /* füllt die Kachel bis zur Höhe der Netzwerk-Graph-Kachel daneben (gleiche Grid-Zeile) */
+    min-height: 0; /* nötig, damit overflow-y in einem Flex-Kind tatsächlich greift */
     overflow-y: auto;
     font-family: "SFMono-Regular", Consolas, monospace;
     font-size: 0.78rem;
@@ -975,4 +1042,107 @@ code {
 .notification-body input[type="url"]:focus {
     outline: none;
     border-color: var(--text-subtle);
+}
+
+/* =========================================================================
+   NETZWERK (Graph-Ansicht des Tailnets über vis-network) - eine Kachel auf der Startseite,
+   Geräte-/Online-/Routen-Zahlen liefern dort bereits die normalen Stat-Karten mit.
+   ========================================================================= */
+.network-graph-wrap {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.network-graph {
+    width: 100%;
+    height: 440px; /* konkrete Höhe für die Dashboard-Kachel (public/views/dashboard.html überschreibt bei Bedarf) */
+}
+
+/* vis-network zeichnet Kanten/Knoten selbst; nur die Tooltip-Box optisch an den
+   Rest der App angleichen (Default von vis-network ist ein gelbes HTML-Tooltip). */
+.vis-tooltip {
+    background: var(--text) !important;
+    color: var(--surface) !important;
+    border: none !important;
+    border-radius: 6px !important;
+    padding: 8px 10px !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    font-size: 0.8rem !important;
+    line-height: 1.5 !important;
+    box-shadow: var(--shadow) !important;
+}
+
+.network-empty-hint {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+/* Wie schon beim SSH-Modal: eine Klasse mit "display: flex" überschrieb sonst das
+   [hidden]-Attribut (Autoren-CSS schlägt UA-Default bei gleicher Spezifität). */
+.network-empty-hint[hidden] {
+    display: none;
+}
+
+.network-legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+
+.network-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.network-legend-route-icon {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--text-subtle);
+}
+
+/* Popup mit Node-Details bei Klick auf einen Geräte-Knoten - eigenes Element statt
+   vis-networks Standard-Hover-Tooltip, da Klick statt Hover gefordert ist. */
+.network-node-popup {
+    position: absolute;
+    z-index: 5;
+    min-width: 180px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 12px 14px;
+    font-size: 0.82rem;
+    color: var(--text);
+    pointer-events: none;
+}
+
+.network-node-popup-title {
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.network-node-popup-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 14px;
+    color: var(--text-muted);
+    padding: 2px 0;
+}
+
+.network-node-popup-row strong {
+    color: var(--text);
+    font-weight: 500;
 }
