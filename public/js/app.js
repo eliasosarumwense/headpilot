@@ -1,22 +1,22 @@
-// --- DYNAMISCHER ROUTER ---
-const viewCache = {}; // hält bereits geladene View-Schnipsel, damit ein erneuter Wechsel ohne Netzwerk-Roundtrip auskommt
-let viewToken = 0; // verhindert, dass eine langsame alte Anfrage eine neuere Ansicht überschreibt
+// --- dynamischer router ---
+const viewCache = {}; // hält bereits geladene view-schnipsel, damit ein erneuter wechsel ohne netzwerk-roundtrip auskommt
+let viewToken = 0; // verhindert, dass eine langsame alte anfrage eine neuere ansicht überschreibt
 
 async function loadView(viewName) {
     const requestId = ++viewToken;
     const content = document.getElementById('app-content');
 
     try {
-        // 1. Markierungen in der Sidebar aktualisieren
+        // 1. markierungen in der sidebar aktualisieren
         document.querySelectorAll('.nav-links a').forEach(el => el.classList.remove('active'));
         document.getElementById(`nav-${viewName}`).classList.add('active');
 
-        // 2. Aktuellen Inhalt sanft ausblenden, bevor er ersetzt wird
+        // 2. aktuellen inhalt sanft ausblenden, bevor er ersetzt wird
         content.classList.add('is-switching');
         await new Promise(resolve => setTimeout(resolve, 110));
-        if (requestId !== viewToken) return; // Nutzer hat inzwischen weitergeklickt
+        if (requestId !== viewToken) return; // nutzer hat inzwischen weitergeklickt
 
-        // 3. Das HTML-Schnipsel laden (aus Cache, falls schon einmal besucht)
+        // 3. das html-schnipsel laden (aus cache, falls schon einmal besucht)
         let html = viewCache[viewName];
         if (!html) {
             const response = await fetch(`/views/${viewName}.html`);
@@ -26,11 +26,11 @@ async function loadView(viewName) {
         }
         if (requestId !== viewToken) return;
 
-        // 4. Das HTML einfügen und wieder einblenden
+        // 4. das html einfügen und wieder einblenden
         content.innerHTML = html;
         content.classList.remove('is-switching');
 
-        // 5. Die passenden API-Daten laden
+        // 5. die passenden api-daten laden
         if (viewName === 'dashboard') { fetchDashboardStats(); fetchDashboardAuditLog(); initNetworkView(); }
         if (viewName === 'nodes') fetchNodes();
         if (viewName === 'docker') fetchDockerNodes();
@@ -46,9 +46,9 @@ async function loadView(viewName) {
     }
 }
 
-// --- API LOGIK: NODES ---
+// --- api logik: nodes ---
 
-// Escaped einen String fürs sichere Einbetten in einfache JS-Anführungszeichen (onclick="...")
+// escaped einen string fürs sichere einbetten in einfache js-anführungszeichen (onclick="...")
 function jsStr(str) {
     return String(str ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
@@ -68,7 +68,7 @@ async function fetchNodes() {
                     : '<span class="ip-chip">-</span>';
                 const lastSeen = new Date(n.lastSeen).toLocaleString();
 
-                // Wir nehmen den echten, gesetzten Namen
+                // wir nehmen den echten, gesetzten namen
                 const name = n.givenName || n.name;
                 const owner = n.user?.name || '-';
                 const statusClass = n.online ? 'online' : '';
@@ -114,7 +114,7 @@ async function fetchNodes() {
     }
 }
 
-// --- API LOGIK: DOCKER DIENSTE ---
+// --- api logik: docker dienste ---
 
 async function fetchDockerNodes() {
     const list = document.getElementById('docker-list');
@@ -123,8 +123,8 @@ async function fetchDockerNodes() {
         const data = await res.json();
 
         if (data.nodes && data.nodes.length > 0) {
-            // Erst alle Karten als Strings sammeln und EINMAL einfügen, statt bei jeder
-            // Node per "+=" das komplette Grid neu zu parsen/aufzubauen.
+            // erst alle karten als strings sammeln und einmal einfügen, statt bei jeder
+            // node per "+=" das komplette grid neu zu parsen/aufzubauen.
             const cardsHtml = data.nodes.map(n => {
                 const ipList = n.ipAddresses || [];
                 const firstIp = ipList[0] || '';
@@ -155,8 +155,8 @@ async function fetchDockerNodes() {
 
             list.innerHTML = cardsHtml.join('');
 
-            // Prüft je Node im Hintergrund, ob schon gespeicherte Zugangsdaten vorliegen,
-            // und passt die Buttons entsprechend an (kein Modal mehr nötig)
+            // prüft je node im hintergrund, ob schon gespeicherte zugangsdaten vorliegen,
+            // und passt die buttons entsprechend an (kein modal mehr nötig)
             data.nodes.forEach(n => {
                 const firstIp = (n.ipAddresses || [])[0] || '';
                 refreshNodeActions(n.id, firstIp, n.givenName || n.name);
@@ -169,8 +169,8 @@ async function fetchDockerNodes() {
     }
 }
 
-// Zeigt je nachdem, ob für die Node bereits sicher gespeicherte SSH-Zugangsdaten
-// existieren, entweder einen direkten "Scannen"-Button oder einen, der erst das Login-Modal öffnet
+// zeigt je nachdem, ob für die node bereits sicher gespeicherte ssh-zugangsdaten
+// existieren, entweder einen direkten "scannen"-button oder einen, der erst das login-modal öffnet
 async function refreshNodeActions(nodeId, ip, name) {
     const actionsDiv = document.getElementById(`docker-actions-${nodeId}`);
     if (!actionsDiv) return;
@@ -178,8 +178,8 @@ async function refreshNodeActions(nodeId, ip, name) {
     const summaryHtml = `<span class="docker-node-summary" id="docker-summary-${nodeId}">Noch nicht gescannt</span>`;
 
     try {
-        // cache: 'no-store' zusätzlich zum Cache-Control-Header vom Server - sonst könnte der
-        // Browser nach dem Speichern noch die alte "saved: false"-Antwort von vorher zeigen
+        // cache: 'no-store' zusätzlich zum header vom server, sonst zeigt der browser
+        // nach dem speichern evtl. noch die alte "saved: false"-antwort
         const res = await fetch(`/api/nodes/${nodeId}/ssh-credentials`, { cache: 'no-store' });
         const info = await res.json();
 
@@ -190,26 +190,26 @@ async function refreshNodeActions(nodeId, ip, name) {
             : `${summaryHtml}
                <button class="btn" onclick="openSshModal('${jsStr(ip)}', '${jsStr(nodeId)}', '${jsStr(name)}')">Scannen</button>`;
 
-        // Für Geräte mit gespeicherten Zugangsdaten direkt automatisch laden,
-        // ohne dass erst auf "Scannen" geklickt werden muss
+        // für geräte mit gespeicherten zugangsdaten direkt automatisch laden,
+        // ohne dass erst auf "scannen" geklickt werden muss
         if (info.saved) scanDockerSSH(ip, nodeId, name);
     } catch (e) {
-        // Bei Fehler bleibt einfach der Standard-Button (mit Modal) stehen
+        // bei fehler bleibt einfach der standard-button (mit modal) stehen
     }
 }
 
-// Entfernt gespeicherte Zugangsdaten wieder (nach Rückfrage) und schaltet den Button zurück aufs Modal
+// entfernt gespeicherte zugangsdaten wieder (nach rückfrage) und schaltet den button zurück aufs modal
 async function forgetSshCredentials(nodeId, ip, name) {
     if (!confirm('Gespeicherte SSH-Zugangsdaten für dieses Gerät wirklich entfernen?')) return;
     try {
         await fetch(`/api/nodes/${nodeId}/ssh-credentials`, { method: 'DELETE' });
     } catch (e) {
-        // Ignorieren - refreshNodeActions zeigt danach ohnehin den aktuellen Stand
+        // ignorieren, refreshnodeactions zeigt danach ohnehin den aktuellen stand
     }
     refreshNodeActions(nodeId, ip, name);
 }
 
-// --- PING (Nodes-Ansicht) ---
+// --- ping (nodes-ansicht) ---
 
 async function pingNode(ip, nodeId) {
     if (!ip || ip === '-') return alert('Dieses Gerät hat keine gültige IP-Adresse.');
@@ -248,19 +248,18 @@ async function pingNode(ip, nodeId) {
     }
 }
 
-// --- API LOGIK: STATUS (Uptime Kuma) ---
+// --- api logik: status (uptime kuma) ---
 
 let statusPollTimer = null;
 
 async function initStatusView() {
-    // Falls schon ein Timer aus einem vorherigen Besuch dieser Ansicht läuft, sauber stoppen
+    // falls schon ein timer aus einem vorherigen besuch dieser ansicht läuft, sauber stoppen
     if (statusPollTimer) clearInterval(statusPollTimer);
 
     await fetchStatus();
     fetchNotificationConfig();
 
-    // Alle 30s aktualisieren - bricht sich selbst ab, sobald die Status-Ansicht
-    // verlassen wurde (erkennbar daran, dass #status-content nicht mehr existiert)
+    // alle 30s aktualisieren, bricht sich selbst ab sobald #status-content nicht mehr existiert
     statusPollTimer = setInterval(() => {
         if (!document.getElementById('status-content')) {
             clearInterval(statusPollTimer);
@@ -292,8 +291,8 @@ const KUMA_STATUS_LABELS = {
     unknown: 'Unbekannt'
 };
 
-// Merkt sich die zuletzt geladenen Monitore (nach ID), damit das Bearbeiten-Modal
-// die vorhandenen Werte vorausfüllen kann, ohne extra beim Server nachzufragen
+// merkt sich die zuletzt geladenen monitore (nach id), damit das bearbeiten-modal
+// die vorhandenen werte vorausfüllen kann, ohne extra beim server nachzufragen
 let currentMonitorsById = {};
 
 function renderStatus(container, data) {
@@ -324,8 +323,8 @@ function renderStatus(container, data) {
 
     const dotClass = (status) => status === 'up' ? 'online' : status === 'down' ? 'down' : '';
 
-    // Verlaufs-Leiste wie im Kuma-Dashboard: ein Balken pro Heartbeat, fehlende am Anfang
-    // werden als leere (graue) Balken aufgefüllt, damit die Leiste immer gleich breit ist
+    // verlaufs-leiste wie im kuma-dashboard: ein balken pro heartbeat, fehlende am anfang
+    // werden als leere (graue) balken aufgefüllt, damit die leiste immer gleich breit ist
     const heartbeatBarHtml = (bar) => {
         const beats = bar || [];
         const padding = Math.max(0, 50 - beats.length);
@@ -357,11 +356,11 @@ function renderStatus(container, data) {
     container.innerHTML = `<div class="status-grid">${cards}</div>`;
 }
 
-// --- MONITOR-MODAL (Anlegen / Bearbeiten) ---
+// --- monitor-modal (anlegen / bearbeiten) ---
 
 let editingMonitorId = null;
 
-// Zeigt/versteckt das Port-Feld und passt das Label des Ziel-Felds an den gewählten Typ an
+// zeigt/versteckt das port-feld und passt das label des ziel-felds an den gewählten typ an
 function updateMonitorFormFields() {
     const type = document.getElementById('monitor-type').value;
     document.getElementById('monitor-target-label').textContent = type === 'http' ? 'URL' : 'Host / IP-Adresse';
@@ -376,7 +375,7 @@ function openMonitorModal(monitorId) {
     document.getElementById('monitor-form-submit').textContent = monitor ? 'Speichern' : 'Anlegen';
     document.getElementById('monitor-name').value = monitor ? monitor.name : '';
     document.getElementById('monitor-type').value = monitor ? monitor.type : 'http';
-    document.getElementById('monitor-type').disabled = !!monitor; // Typ kann beim Bearbeiten nicht geändert werden
+    document.getElementById('monitor-type').disabled = !!monitor; // typ kann beim bearbeiten nicht geändert werden
     document.getElementById('monitor-target').value = monitor ? (monitor.target || '') : '';
     document.getElementById('monitor-port').value = monitor && monitor.port ? monitor.port : '';
     document.getElementById('monitor-interval').value = 60;
@@ -436,8 +435,8 @@ async function deleteMonitor(monitorId, name) {
     }
 }
 
-// --- DISCORD-BENACHRICHTIGUNG (Status-Reiter) ---
-// Bewusst nur eine einzige, ein-/ausschaltbare Benachrichtigung - kein Verwalten mehrerer.
+// --- discord-benachrichtigung (status-reiter) ---
+// nur eine einzige, ein-/ausschaltbare benachrichtigung, kein verwalten mehrerer
 
 async function fetchNotificationConfig() {
     const card = document.getElementById('notification-card');
@@ -466,8 +465,7 @@ function updateNotificationStatusText(enabled) {
     if (el) el.textContent = enabled ? 'Aktiviert' : 'Deaktiviert';
 }
 
-// Wird direkt beim Umlegen des Schalters ausgelöst - speichert sofort, kein Klick auf
-// "Speichern" nötig, um die Benachrichtigung ein-/auszuschalten.
+// läuft direkt beim umlegen des schalters, speichert sofort, kein klick auf "speichern" nötig
 async function handleNotificationToggle() {
     const checkbox = document.getElementById('notification-enabled');
     const enabled = checkbox.checked;
@@ -489,12 +487,12 @@ async function handleNotificationToggle() {
         if (!res.ok) throw new Error(data.error || 'Speichern fehlgeschlagen.');
         updateNotificationStatusText(enabled);
     } catch (e) {
-        checkbox.checked = !enabled; // Schalter zurücksetzen, da es nicht geklappt hat
+        checkbox.checked = !enabled; // schalter zurücksetzen, da es nicht geklappt hat
         alert('Fehler: ' + e.message);
     }
 }
 
-// Speichert die Webhook-URL (z.B. beim Ändern) - der Ein/Aus-Zustand bleibt dabei wie er ist
+// speichert die webhook-url, der ein/aus-zustand bleibt dabei unverändert
 async function saveNotificationConfig() {
     const enabled = document.getElementById('notification-enabled').checked;
     const webhookUrl = document.getElementById('notification-webhook-input').value.trim();
@@ -513,16 +511,12 @@ async function saveNotificationConfig() {
     }
 }
 
-// 1. Gerät umbenennen
+// 1. gerät umbenennen
 async function renameNode(id, oldName) {
     const rawName = prompt(`Neuen Namen für Gerät "${oldName}" eingeben:\n\n(Hinweis: Wird automatisch für DNS in Kleinbuchstaben & Bindestriche umgewandelt)`);
     if (!rawName || rawName.trim() === "") return;
     
-    // FIX: Wir machen den Namen automatisch "Headscale-sicher" (DNS-konform)
-    // 1. trim(): Entfernt Leerzeichen am Anfang und Ende
-    // 2. toLowerCase(): Macht alles klein
-    // 3. replace(/\s+/g, '-'): Ersetzt alle Leerzeichen in der Mitte durch einen Bindestrich
-    // 4. replace(/[^a-z0-9-]/g, ''): Wirft alle komischen Sonderzeichen (!, ?, etc.) raus
+    // macht den namen dns-konform: klein, leerzeichen zu "-", sonderzeichen raus
     const safeName = rawName.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
     
     try {
@@ -531,13 +525,13 @@ async function renameNode(id, oldName) {
             const data = await res.json();
             throw new Error(data.error || "Fehler beim Umbenennen");
         }
-        fetchNodes(); // Tabelle neu laden
+        fetchNodes(); // tabelle neu laden
     } catch (e) {
         alert("Fehler: " + e.message);
     }
 }
 
-// 2. Sitzung zwingend beenden (Das Gerät verliert das VPN und muss neu in Keycloak einloggen)
+// 2. sitzung zwingend beenden (das gerät verliert das vpn und muss neu in keycloak einloggen)
 async function expireNode(id, name) {
     if (!confirm(`Sitzung für Gerät "${name}" wirklich sofort beenden?\n\nDas Gerät wird aus dem VPN geworfen und muss sich neu authentifizieren!`)) return;
     
@@ -553,7 +547,7 @@ async function expireNode(id, name) {
     }
 }
 
-// 3. Gerät dauerhaft löschen
+// 3. gerät dauerhaft löschen
 async function deleteNode(id, name) {
     if (!confirm(`Gerät "${name}" wirklich komplett aus dem VPN löschen?\n\nAchtung: Das kann nicht rückgängig gemacht werden!`)) return;
     
@@ -586,9 +580,8 @@ async function fetchUsers() {
         }
 
         grid.innerHTML = users.map(u => {
-            // Anzeigename (falls über OIDC bekannt, z.B. "Elias Osarumwense") als Untertitel
-            // zum technischen Benutzernamen - der bleibt oben, da er überall sonst in der App
-            // als Referenz dient (Node-/Key-Besitzer, Rename-Ziel).
+            // anzeigename als untertitel, der technische benutzername bleibt oben, weil der
+            // sonst überall als referenz dient (node-/key-besitzer, rename-ziel)
             const provider = u.provider === 'oidc' ? 'OIDC-Login' : 'Manuell angelegt';
             const subtitle = u.displayName ? escapeHtml(u.displayName) : provider;
 
@@ -658,22 +651,22 @@ async function deleteUser(id, name) {
     }
 }
 
-// --- API LOGIK: DASHBOARD / ÜBERSICHT ---
-// --- API LOGIK: DASHBOARD / ÜBERSICHT ---
+// --- api logik: dashboard / übersicht ---
+// --- api logik: dashboard / übersicht ---
 async function fetchDashboardStats() {
     try {
-        // Wir laden jetzt alle 4 Datenquellen auf einmal!
+        // wir laden jetzt alle 4 datenquellen auf einmal!
         const [nodesRes, usersRes, routesRes, keysRes] = await Promise.all([
             fetch('/api/nodes'),
             fetch('/api/users'),
             fetch('/api/routes'),
-            fetch('/api/keys') // <-- NEU: Alle Keys abrufen
+            fetch('/api/keys') // <-- neu: alle keys abrufen
         ]);
         
         const nodesData = await nodesRes.json();
         const usersData = await usersRes.json();
         const routesData = await routesRes.json();
-        const keysData = await keysRes.json(); // <-- NEU
+        const keysData = await keysRes.json(); // <-- neu
 
         const formatList = (arr) => {
             if (!arr || arr.length === 0) return "Keine Einträge";
@@ -683,12 +676,12 @@ async function fetchDashboardStats() {
 
         const jetzt = new Date();
 
-        // 1. Benutzer
+        // 1. benutzer
         const usersList = usersData.users ? usersData.users.map(u => u.name) : [];
         document.getElementById('stat-users').innerText = usersList.length;
         document.getElementById('detail-users').innerText = formatList(usersList);
 
-        // 2. Nodes & Online & Ablauf
+        // 2. nodes & online & ablauf
         const nodesList = [];
         const onlineList = [];
         const expiringList = [];
@@ -720,7 +713,7 @@ async function fetchDashboardStats() {
         document.getElementById('detail-expiring').innerText = expiringList.length > 0 ? formatList(expiringList) : "Keine baldigen Abläufe";
         if (expiringList.length > 0) document.getElementById('stat-expiring').classList.add('color-danger');
 
-        // 3. Routen
+        // 3. routen
         const routesList = [];
         if (routesData.routes) {
             routesData.routes.filter(r => r.approved).forEach(r => routesList.push(r.route));
@@ -728,16 +721,16 @@ async function fetchDashboardStats() {
         document.getElementById('stat-routes').innerText = routesList.length;
         document.getElementById('detail-routes').innerText = routesList.length > 0 ? formatList(routesList) : "Keine aktiven Subnetze";
 
-        // 4. Keys (FIXED!)
+        // 4. keys (fixed!)
         let activeKeysCount = 0;
         const usersWithKeys = new Set();
         
         if (keysData.preAuthKeys) {
             keysData.preAuthKeys.forEach(k => {
-                // Ist der Key in der Zukunft?
+                // ist der key in der zukunft?
                 if (new Date(k.expiration) > jetzt) {
                     activeKeysCount++;
-                    // Headscale liefert uns mit, wem der Key gehört
+                    // headscale liefert uns mit, wem der key gehört
                     if (k.user && k.user.name) {
                         usersWithKeys.add(k.user.name);
                     }
@@ -754,7 +747,7 @@ async function fetchDashboardStats() {
     }
 }
 
-// --- API LOGIK: KEYS ---
+// --- api logik: keys ---
 
 async function initKeysView() {
     try {
@@ -772,7 +765,7 @@ async function initKeysView() {
         console.error("Fehler beim Laden", e);
     }
 
-    // Zeigt alle aktiven Keys direkt an - kein Benutzer-Filter nötig, um sie überhaupt zu sehen
+    // zeigt alle aktiven keys direkt an, kein benutzer-filter nötig um sie zu sehen
     fetchKeys();
 }
 
@@ -829,7 +822,7 @@ async function createKey() {
 
     if (!userName) return alert("Bitte wähle zuerst einen Benutzer aus!");
 
-    // FIX: Wir lesen die ID aus und machen zwingend eine Zahl (Integer) daraus!
+    // fix: wir lesen die id aus und machen zwingend eine zahl (integer) daraus!
     const userId = parseInt(select.options[select.selectedIndex].getAttribute('data-id'), 10);
 
     const expirationDate = new Date();
@@ -841,7 +834,7 @@ async function createKey() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                user: userId, // <-- HIER SCHICKEN WIR JETZT DIE ZAHL STATT DEM NAMEN
+                user: userId, // <-- hier schicken wir jetzt die zahl statt dem namen
                 reusable: reusable,
                 ephemeral: false,
                 expiration: safeExpiration
@@ -859,9 +852,8 @@ async function createKey() {
     }
 }
 
-// FIX: Headscale identifiziert den zu löschenden Key über seine ID, NICHT über den Key-Wert
-// selbst - die Liste liefert den Key-Wert ohnehin nur maskiert zurück (z.B. "hskey-...-***"),
-// ein Aufruf mit diesem maskierten Wert schlägt lautlos fehl (200 OK, aber ohne jede Wirkung).
+// headscale identifiziert den key über seine id, nicht über den wert selbst (der kommt aus
+// der liste ohnehin nur maskiert zurück, z.b. "hskey-...-***", damit schlägt der aufruf lautlos fehl)
 async function expireKey(keyId, keyPrefix) {
     if (!confirm(`Möchtest du den Key ${keyPrefix.substring(0, 20)}... wirklich deaktivieren?`)) return;
 
@@ -881,7 +873,7 @@ async function expireKey(keyId, keyPrefix) {
     }
 }
 
-// --- API LOGIK: SUBNET ROUTES ---
+// --- api logik: subnet routes ---
 
 async function fetchRoutes() {
     const grid = document.getElementById('routes-grid');
@@ -958,8 +950,8 @@ async function disableRoute(nodeId, route) {
     }
 }
 
-// Kopiert den Befehl aus einer .code-box in die Zwischenablage (Anleitung oben auf der Seite) -
-// kurzes visuelles Feedback am Button selbst, kein zusätzlicher Toast/Alert nötig.
+// kopiert den befehl aus einer .code-box in die zwischenablage (anleitung oben auf der seite) -
+// kurzes visuelles feedback am button selbst, kein zusätzlicher toast/alert nötig.
 function copyCodeBox(button) {
     const code = button.previousElementSibling.textContent;
     navigator.clipboard.writeText(code).then(() => {
@@ -969,10 +961,10 @@ function copyCodeBox(button) {
     });
 }
 
-// --- API LOGIK: NETZWERK-GRAPH ---
+// --- api logik: netzwerk-graph ---
 
-let networkGraphInstance = null; // vis-network kennt kein sinnvolles Re-Init - beim erneuten Öffnen einfach zerstören und neu aufbauen
-let networkGraphNodesById = {}; // Rohdaten der Geräte-Knoten, für das Klick-Popup (nur node-Objekte, nicht Headscale/Routes)
+let networkGraphInstance = null; // vis-network kennt kein sinnvolles re-init - beim erneuten öffnen einfach zerstören und neu aufbauen
+let networkGraphNodesById = {}; // rohdaten der geräte-knoten, für das klick-popup (nur node-objekte, nicht headscale/routes)
 
 async function initNetworkView() {
     const container = document.getElementById('network-graph');
@@ -1001,8 +993,8 @@ async function initNetworkView() {
             return;
         }
 
-        // Farben aus den bestehenden CSS-Variablen lesen, statt sie hier hart zu kodieren -
-        // der Graph bleibt so automatisch im gleichen minimalistischen Look wie der Rest der App.
+        // farben aus den bestehenden css-variablen lesen, statt sie hier hart zu kodieren -
+        // der graph bleibt so automatisch im gleichen minimalistischen look wie der rest der app.
         const style = getComputedStyle(document.documentElement);
         const cssVar = (name) => style.getPropertyValue(name).trim();
         const colorSuccess = cssVar('--success');
@@ -1015,17 +1007,13 @@ async function initNetworkView() {
         const fontFace = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
         const nodeShadow = { enabled: true, color: 'rgba(0,0,0,0.12)', size: 8, x: 0, y: 2 };
 
-        // Feste, deterministische Positionen statt einer physik-basierten Simulation:
-        // vis-network würfelt ohne eigene Koordinaten bei jedem Laden neue Startpositionen
-        // aus, wodurch der Graph bei jedem Seitenaufruf anders aussieht. Stattdessen werden
-        // die Geräte-Knoten hier gleichmäßig im Kreis um Headscale herum platziert (nach
-        // Node-ID sortiert, damit die Reihenfolge stabil bleibt) - Physik bleibt komplett
-        // aus, damit das Bild bei jedem Neuladen exakt identisch aussieht.
+        // feste positionen statt physik-simulation (sonst sieht der graph bei jedem laden
+        // anders aus), knoten gleichmäßig im kreis, nach id sortiert
         const sortedNodes = [...graphNodes].sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
         const nodeRadius = Math.max(200, sortedNodes.length * 32);
         const routeRadius = nodeRadius + 130;
         const angleStep = (2 * Math.PI) / sortedNodes.length;
-        const nodeAngle = {}; // nodeId -> Winkel, damit zugehörige Routes am selben "Ast" weiterlaufen
+        const nodeAngle = {}; // nodeid -> winkel, damit zugehörige routes am selben "ast" weiterlaufen
 
         const nodes = [{
             id: 'headscale',
@@ -1041,15 +1029,15 @@ async function initNetworkView() {
 
         sortedNodes.forEach((n, i) => {
             const nodeId = 'node-' + n.id;
-            const angle = i * angleStep - Math.PI / 2; // bei 12 Uhr beginnend, im Uhrzeigersinn
+            const angle = i * angleStep - Math.PI / 2; // bei 12 uhr beginnend, im uhrzeigersinn
             nodeAngle[n.id] = angle;
             const dotColor = n.online ? colorSuccess : colorOffline;
             const ip = (n.ipAddresses || [])[0];
             networkGraphNodesById[nodeId] = n;
             nodes.push({
                 id: nodeId,
-                // Zweizeiliges Label: Name + IP direkt sichtbar, ohne dafür klicken zu müssen -
-                // macht den Graphen auf den ersten Blick informativer, nicht nur ein Namensschild.
+                // zweizeiliges label: name + ip direkt sichtbar, ohne dafür klicken zu müssen -
+                // macht den graphen auf den ersten blick informativer, nicht nur ein namensschild.
                 label: ip ? `${n.name}\n${ip}` : n.name,
                 shape: 'dot',
                 size: 17,
@@ -1062,8 +1050,8 @@ async function initNetworkView() {
             edges.push({ from: 'headscale', to: nodeId, color: { color: colorBorder }, width: 1.5 });
         });
 
-        // Routes je Node zählen, um mehrere Routes am selben Node leicht auffächern zu
-        // können - sonst würden sie exakt übereinander liegen.
+        // routes je node zählen, damit mehrere routes am selben node auffächern statt
+        // exakt übereinander zu liegen
         const routesByNode = {};
         graphRoutes.forEach(r => { (routesByNode[r.nodeId] = routesByNode[r.nodeId] || []).push(r); });
 
@@ -1071,7 +1059,7 @@ async function initNetworkView() {
             const routeId = 'route-' + r.nodeId + '-' + i;
             const siblings = routesByNode[r.nodeId] || [r];
             const indexAmongSiblings = siblings.indexOf(r);
-            const spread = (indexAmongSiblings - (siblings.length - 1) / 2) * 0.3; // ~17° Auffächerung pro weiterer Route
+            const spread = (indexAmongSiblings - (siblings.length - 1) / 2) * 0.3; // ~17° auffächerung pro weiterer route
             const angle = (nodeAngle[r.nodeId] || 0) + spread;
 
             nodes.push({
@@ -1091,7 +1079,7 @@ async function initNetworkView() {
 
         const visData = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
         const options = {
-            physics: false, // Positionen liegen bereits fest - keine Simulation, kein Zufall, kein Nachwackeln
+            physics: false, // positionen liegen bereits fest - keine simulation, kein zufall, kein nachwackeln
             interaction: { hover: false, dragNodes: true, zoomView: true, dragView: true },
             edges: { smooth: { type: 'continuous', roundness: 0.5 } },
             nodes: { borderWidth: 2 }
@@ -1099,19 +1087,16 @@ async function initNetworkView() {
 
         networkGraphInstance = new vis.Network(container, visData, options);
 
-        // Bewusst NICHT fit() - das zentriert auf den Schwerpunkt der Bounding-Box aller Knoten,
-        // der bei ungleich verteilten Routes/Nodes nicht mit Headscale (immer bei x:0, y:0)
-        // zusammenfällt. Stattdessen wird hier direkt auf (0,0) zentriert, mit einem selbst
-        // berechneten Zoom, der weiterhin alle Knoten sichtbar hält (größte Distanz zu (0,0)
-        // über alle Knotenpositionen, plus etwas Rand für Knotengröße/Labels).
+        // kein fit(), das zentriert sonst auf die bounding-box statt auf headscale (0,0)
+        // zoom selbst berechnet: größte knoten-distanz zu (0,0), plus rand.
         const maxDist = Math.max(1, ...nodes.map(n => Math.hypot(n.x || 0, n.y || 0)));
         const canvasSize = Math.min(container.clientWidth, container.clientHeight) || 380;
-        const edgePaddingPx = 18; // knapper Rand statt viel ungenutztem Leerraum - wirkte vorher zu weit herausgezoomt
+        const edgePaddingPx = 18; // knapper rand statt viel ungenutztem leerraum - wirkte vorher zu weit herausgezoomt
         const scale = Math.max(0.1, (canvasSize / 2 - edgePaddingPx) / maxDist);
         networkGraphInstance.moveTo({ position: { x: 0, y: 0 }, scale });
 
-        // Klick auf einen echten Geräte-Knoten zeigt das Detail-Popup, Klick daneben
-        // (leere Fläche, Headscale-Knoten selbst oder eine Route) blendet es wieder aus.
+        // klick auf einen echten geräte-knoten zeigt das detail-popup, klick daneben
+        // (leere fläche, headscale-knoten selbst oder eine route) blendet es wieder aus.
         networkGraphInstance.on('click', (params) => {
             const clickedId = params.nodes[0];
             if (typeof clickedId === 'string' && networkGraphNodesById[clickedId]) {
@@ -1153,10 +1138,10 @@ function hideNetworkPopup() {
     if (popup) popup.hidden = true;
 }
 
-// --- API LOGIK: AUDIT LOG ---
+// --- api logik: audit log ---
 
-// Zeigt die letzten Audit-Log-Einträge als kompakten Log-Feed auf der Startseite an -
-// klassischer Monospace-"Log"-Look statt einer normalen Tabelle.
+// zeigt die letzten audit-log-einträge als kompakten log-feed auf der startseite an -
+// klassischer monospace-"log"-look statt einer normalen tabelle.
 async function fetchDashboardAuditLog() {
     const container = document.getElementById('dashboard-audit-log');
     if (!container) return;
@@ -1196,9 +1181,9 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
-// --- SSH-MODAL (Docker-Scan) ---
+// --- ssh-modal (docker-scan) ---
 
-let sshModalContext = null; // { ip, nodeId, nodeName }
+let sshModalContext = null; // { ip, nodeid, nodename }
 
 function openSshModal(ip, nodeId, nodeName) {
     if (!ip || ip === '-') return alert('Dieses Gerät hat keine gültige IP-Adresse.');
@@ -1242,9 +1227,9 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { closeSshModal(); closeMonitorModal(); }
 });
 
-// --- DOCKER-SCAN ÜBER SSH ---
+// --- docker-scan über ssh ---
 
-// Deutsche Kurzbezeichnung für die Docker-Zustände
+// deutsche kurzbezeichnung für die docker-zustände
 const DOCKER_STATE_LABELS = {
     running: 'Läuft',
     exited: 'Gestoppt',
@@ -1254,8 +1239,8 @@ const DOCKER_STATE_LABELS = {
     dead: 'Fehlgeschlagen'
 };
 
-// username/password/remember sind optional: fehlen sie, versucht der Server, gespeicherte
-// (verschlüsselte) Zugangsdaten für diese Node zu verwenden - kein erneutes Login nötig.
+// username/password/remember sind optional, fehlen sie, versucht der server gespeicherte
+// zugangsdaten für diese node zu verwenden, dann kein erneutes login nötig
 async function scanDockerSSH(ip, nodeId, nodeName, username, password, remember) {
     const bodyDiv = document.getElementById(`docker-services-${nodeId}`);
     let summarySpan = document.getElementById(`docker-summary-${nodeId}`);
@@ -1291,7 +1276,7 @@ async function scanDockerSSH(ip, nodeId, nodeName, username, password, remember)
     }
 }
 
-// Baut die Container-Tabelle auf: laufende Dienste zuerst, mit Image, Status-Detail und Ports
+// baut die container-tabelle auf: laufende dienste zuerst, mit image, status-detail und ports
 function renderDockerContainers(bodyDiv, summarySpan, containers) {
     if (containers.length === 0) {
         if (summarySpan) summarySpan.textContent = 'Keine Container gefunden';
@@ -1344,10 +1329,8 @@ function renderDockerContainers(bodyDiv, summarySpan, containers) {
     `;
 }
 
-// Wenn das Skript geladen ist, starte mit der "nodes" Ansicht
-// Zeigt den eingeloggten Benutzer unten in der Sidebar an (Name/Benutzername + Avatar mit
-// Anfangsbuchstabe) - läuft einmalig beim Laden der App, nicht bei jedem Reiterwechsel, da
-// sich der eingeloggte Benutzer währenddessen ohnehin nicht ändert.
+// zeigt den eingeloggten benutzer unten in der sidebar an, läuft einmalig beim start,
+// nicht bei jedem reiterwechsel
 async function fetchCurrentUser() {
     const box = document.getElementById('sidebar-user');
     if (!box) return;
@@ -1355,14 +1338,15 @@ async function fetchCurrentUser() {
         const res = await fetch('/api/me');
         const data = await res.json();
         const display = data.name || data.username;
-        if (!display) return; // kein Claim gefunden - Sidebar bleibt einfach ohne Benutzeranzeige
+        if (!display) return; // kein claim gefunden - sidebar bleibt einfach ohne benutzeranzeige
 
         document.getElementById('sidebar-user-avatar').textContent = display.charAt(0);
         document.getElementById('sidebar-user-name').textContent = display;
         box.hidden = false;
     } catch (e) {
-        // Anzeige ist rein informativ - ein Fehler hier darf die App nicht stören
+        // anzeige ist rein informativ, ein fehler hier darf die app nicht stören
     }
 }
 
+// beim start: startseite laden, eingeloggten benutzer in der sidebar anzeigen
 window.onload = () => { loadView('dashboard'); fetchCurrentUser(); };

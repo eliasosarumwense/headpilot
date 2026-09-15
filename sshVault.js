@@ -1,15 +1,5 @@
-// sshVault.js
-// Speichert SSH-Zugangsdaten pro Node verschlüsselt auf der Festplatte, damit man
-// sich nicht bei jedem Docker-Scan erneut per SSH einloggen muss.
-//
-// Sicherheitsprinzip:
-// - AES-256-GCM, pro gespeichertem Eintrag ein neuer zufälliger IV + Auth-Tag
-// - Der Schlüssel wird per scrypt aus SSH_VAULT_SECRET (.env) + einem einmalig
-//   zufällig generierten, pro Installation festen Salt abgeleitet (nie fest verdrahtet)
-// - Ohne gesetztes SSH_VAULT_SECRET bleibt das Feature komplett deaktiviert -
-//   es gibt bewusst KEINEN unsicheren Default-Schlüssel wie beim SESSION_SECRET-Fallback
-// - Die Vault-Datei landet außerhalb von "public" und wird per .gitignore nie committed
-// - Die Datei bekommt Unix-Rechte 0600 (nur der Prozess-Owner darf sie lesen)
+// speichert ssh-zugangsdaten pro node verschlüsselt (aes-256-gcm, schlüssel per scrypt aus
+// ssh_vault_secret + zufälligem salt). ohne secret komplett deaktiviert, kein default-fallback.
 
 const fs = require('fs');
 const path = require('path');
@@ -37,7 +27,7 @@ function persist(raw) {
     fs.writeFileSync(VAULT_PATH, JSON.stringify(raw, null, 2), { mode: 0o600 });
 }
 
-// Legt die Vault-Datei mit einem frischen, zufälligen Salt an, falls sie noch nicht existiert
+// legt die vault-datei mit einem frischen, zufälligen salt an, falls sie noch nicht existiert
 function ensureVaultFile() {
     const existing = loadRaw();
     if (existing && existing.salt) return existing;
@@ -48,8 +38,8 @@ function ensureVaultFile() {
 }
 
 function deriveKey(saltHex) {
-    // scrypt statt einem simplen Hash, damit ein schwaches SSH_VAULT_SECRET nicht
-    // trivial per Brute-Force zu knacken wäre
+    // scrypt statt einem simplen hash, damit ein schwaches ssh_vault_secret nicht
+    // trivial per brute-force zu knacken wäre
     return crypto.scryptSync(SECRET, Buffer.from(saltHex, 'hex'), 32);
 }
 
@@ -74,7 +64,7 @@ function decrypt(key, entry) {
     return JSON.parse(plaintext.toString('utf8'));
 }
 
-// Speichert Benutzername + Passwort für eine Node verschlüsselt ab (überschreibt einen vorhandenen Eintrag)
+// speichert benutzername + passwort für eine node verschlüsselt ab (überschreibt einen vorhandenen eintrag)
 function saveCredentials(nodeId, username, password) {
     if (!isEnabled()) throw new Error('SSH_VAULT_SECRET ist auf dem Server nicht konfiguriert.');
 
@@ -83,8 +73,8 @@ function saveCredentials(nodeId, username, password) {
 
     raw.credentials[String(nodeId)] = {
         ...encrypt(key, { username, password }),
-        // Nutzername unverschlüsselt nur zur Anzeige in der UI ("gespeichert für root") -
-        // das Passwort selbst liegt ausschließlich in "data" (verschlüsselt)
+        // nutzername unverschlüsselt nur zur anzeige in der ui ("gespeichert für root") -
+        // das passwort selbst liegt ausschließlich in "data" (verschlüsselt)
         username,
         updatedAt: new Date().toISOString()
     };
@@ -92,8 +82,8 @@ function saveCredentials(nodeId, username, password) {
     persist(raw);
 }
 
-// Liefert { username, password } entschlüsselt zurück, oder null wenn nichts gespeichert /
-// das Feature nicht konfiguriert ist
+// liefert { username, password } entschlüsselt zurück, oder null wenn nichts gespeichert /
+// das feature nicht konfiguriert ist
 function getCredentials(nodeId) {
     if (!isEnabled()) return null;
 
@@ -109,7 +99,7 @@ function getCredentials(nodeId) {
     }
 }
 
-// Nur Metadaten für die UI - liefert NIE das Passwort zurück
+// nur metadaten für die ui, liefert nie das passwort zurück
 function getCredentialsInfo(nodeId) {
     const raw = loadRaw();
     const entry = raw?.credentials?.[String(nodeId)];

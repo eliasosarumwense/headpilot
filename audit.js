@@ -1,8 +1,5 @@
-// audit.js
-// Schreibt sicherheitsrelevante Aktionen (Löschen, Anlegen, Login, ...) in die Postgres-
-// Tabelle "headpilot.audit_log". Läuft nach demselben Prinzip wie die Kuma-/SSH-Vault-
-// Integration: Ist DATABASE_URL nicht gesetzt, bleibt das Feature einfach deaktiviert -
-// blockiert oder crasht dabei nie die eigentliche Anwendung.
+// schreibt sicherheitsrelevante aktionen in die postgres-tabelle "headpilot.audit_log".
+// ohne database_url komplett deaktiviert, blockiert nie die eigentliche anwendung.
 
 const { Pool } = require('pg');
 
@@ -10,9 +7,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
 
 if (pool) {
-    // Ein Verbindungsfehler auf einem einzelnen Client im Pool darf nie den ganzen
-    // Prozess crashen (Node killt den Prozess sonst standardmäßig bei einem
-    // unbehandelten 'error'-Event auf dem Pool).
+    // verhindert, dass ein pool-fehler den ganzen prozess crasht
     pool.on('error', (err) => {
         console.error('Audit-Log: unerwarteter Datenbankfehler (Pool bleibt bestehen):', err.message);
     });
@@ -24,8 +19,8 @@ function isConfigured() {
     return !!pool;
 }
 
-// Schreibt einen Eintrag. Bewusst so gebaut, dass ein Fehler beim Loggen NIE die
-// eigentliche Aktion (z.B. "Node löschen") verhindert - wird nur geloggt, nie geworfen.
+// schreibt einen eintrag, ein fehler beim loggen darf die eigentliche aktion nie verhindern,
+// wird nur geloggt, nie geworfen
 async function logAudit({ actor, action, target, details, ip } = {}) {
     if (!pool) return;
 
@@ -46,9 +41,7 @@ async function logAudit({ actor, action, target, details, ip } = {}) {
     }
 }
 
-// Liefert die letzten Einträge, neueste zuerst. Wirft bei einem echten DB-Fehler
-// (im Unterschied zu logAudit) - die aufrufende Route unterscheidet damit "nicht
-// konfiguriert" von "konfiguriert, aber gerade nicht erreichbar", genau wie bei Kuma.
+// liefert die letzten einträge, wirft bei echtem db-fehler (anders als logaudit)
 async function getAuditLog({ limit = 50, offset = 0 } = {}) {
     if (!pool) return [];
 

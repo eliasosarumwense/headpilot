@@ -1,17 +1,14 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const session = require('express-session'); // Für das Session-Management
+const session = require('express-session'); // für das session-management
 const { execFile } = require('child_process');
 const dns = require('dns');
 const fs = require('fs');
 const path = require('path');
 const audit = require('./audit');
 
-// Dekodiert das im Login-Callback gespeicherte OIDC-id_token (JWT) und liefert dessen Payload.
-// Keine erneute Signatur-Prüfung nötig - das Token wurde bereits einmal beim Token-Austausch
-// mit Keycloak (über HTTPS + Client-Secret) verifiziert, wir lesen hier nur die bereits
-// vertrauenswürdigen Claims aus der Session wieder aus.
+// dekodiert das gespeicherte oidc-id_token (jwt), schon beim login bei keycloak verifiziert.
 function decodeIdTokenPayload(req) {
     try {
         const idToken = req.session?.tokens?.id_token;
@@ -22,20 +19,14 @@ function decodeIdTokenPayload(req) {
     }
 }
 
-// Liest den eingeloggten Benutzernamen fürs Audit-Log aus (siehe decodeIdTokenPayload oben).
+// liest den eingeloggten benutzernamen fürs audit-log aus (siehe decodeidtokenpayload oben).
 function getActor(req) {
     const payload = decodeIdTokenPayload(req);
     return payload?.preferred_username || payload?.email || 'unknown';
 }
 
-// Workaround für ein bekanntes macOS/Tailscale-Problem: Wenn Tailscale MagicDNS die DNS-
-// Auflösung dynamisch über die System Configuration verwaltet (statt einer statischen
-// /etc/resolv.conf), findet Node's OS-basiertes dns.lookup() (das fetch/http/socket.io intern
-// für JEDEN Hostnamen nutzt) manche Domains nicht (ENOTFOUND), obwohl sie ganz normal per DNS
-// auflösbar sind - dns.resolve4/6 (fragt den Nameserver direkt ab, ohne über die OS-Ebene zu
-// gehen) findet sie hingegen problemlos. Reine Lokal-macOS-Eigenheit, betrifft die
-// VPS-Produktion nicht, schadet dort aber auch nicht (Fallback greift nur, wenn die normale
-// Auflösung tatsächlich fehlschlägt).
+// workaround für ein macos/tailscale-dns-problem: dns.lookup() findet manche domains nicht
+// (enotfound), obwohl dns.resolve4/6 sie problemlos auflöst. betrifft nur lokal, vps unberührt.
 const originalDnsLookup = dns.lookup;
 dns.lookup = function patchedDnsLookup(hostname, options, callback) {
     if (typeof options === 'function') { callback = options; options = {}; }
@@ -49,17 +40,14 @@ dns.lookup = function patchedDnsLookup(hostname, options, callback) {
                 const addrs = [];
                 if (v4.status === 'fulfilled') addrs.push(...v4.value.map(a => ({ address: a, family: 4 })));
                 if (v6.status === 'fulfilled') addrs.push(...v6.value.map(a => ({ address: a, family: 6 })));
-                if (addrs.length === 0) return callback(err); // ursprünglichen Fehler zurückgeben
+                if (addrs.length === 0) return callback(err); // ursprünglichen fehler zurückgeben
                 if (wantAll) return callback(null, addrs);
                 callback(null, addrs[0].address, addrs[0].family);
             });
     });
 };
 
-// Sicherheitsnetz: Ein unerwarteter Fehler (z.B. eine abgelehnte Promise irgendwo tief in
-// einer Bibliothek) soll NIE den ganzen Prozess killen und damit alle offenen Verbindungen
-// mitten in der Anfrage kappen (im Browser sieht man das dann nur als "Load failed").
-// Stattdessen wird der Fehler geloggt und der Server läuft weiter.
+// sicherheitsnetz: ein unerwarteter fehler soll nie den ganzen prozess killen, nur loggen.
 process.on('unhandledRejection', (err) => {
     console.error('Unbehandelte Promise-Ablehnung (Server läuft weiter):', err);
 });
@@ -69,15 +57,15 @@ process.on('uncaughtException', (err) => {
 
 const app = express();
 app.set('trust proxy', 1);
-// Basis-Middleware
+// basis-middleware
 app.use(cors());
 app.use(express.json());
 
-// Variablen aus der .env Datei
+// variablen aus der .env datei
 const PORT = process.env.PORT || 3000;
 const HEADSCALE_URL = process.env.HEADSCALE_URL;
 
-// FIX 1: Akzeptiert HEADSCALE_API_KEY oder das einfache API_KEY aus deiner .env
+// fix 1: akzeptiert headscale_api_key oder das einfache api_key aus deiner .env
 const API_KEY = process.env.HEADSCALE_API_KEY || process.env.API_KEY; 
 
 const KEYCLOAK_URL = process.env.KEYCLOAK_REALM_URL;
@@ -86,7 +74,7 @@ const CLIENT_SECRET = process.env.KEYCLOAK_CLIENT_SECRET;
 const REDIRECT_URI = process.env.REDIRECT_URI || 'https://vpn.elias-osarumwense.com/login/callback';
 
 app.use(session({
-    // FIX 2: Fallback-String verhindert einen HTTP 500 Absturz, falls SESSION_SECRET mal temporär fehlt
+    // fix 2: fallback-string verhindert einen http 500 absturz, falls session_secret mal temporär fehlt
     secret: process.env.SESSION_SECRET || 'headpilot-vienna-fallback-secret-string', 
     resave: false,
     saveUninitialized: false,
@@ -96,23 +84,21 @@ app.use(session({
     }
 }));
 
-// =========================================================================
-// 1. ÖFFENTLICHE ROUTEN (Müssen VOR der Schranke liegen!)
-// =========================================================================
+// --- 1. öffentliche routen (müssen vor der schranke liegen!) ---
 
-// Login-Startpunkt: Leitet den Browser zu Keycloak weiter
+// login-startpunkt: leitet den browser zu keycloak weiter
 app.get('/login', (req, res) => {
     const authUrl = `${KEYCLOAK_URL}/protocol/openid-connect/auth?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=openid+profile+email`;
     res.redirect(authUrl);
 });
 
-// Callback: Hier landet der User nach dem Keycloak-Login
+// callback: hier landet der user nach dem keycloak-login
 app.get('/login/callback', async (req, res) => {
     const { code } = req.query;
     if (!code) return res.status(400).send('Kein Authorization Code erhalten.');
 
     try {
-        // Tausche den Code bei Keycloak gegen ein echtes Token
+        // tausche den code bei keycloak gegen ein echtes token
         const response = await fetch(`${KEYCLOAK_URL}/protocol/openid-connect/token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -129,13 +115,13 @@ app.get('/login/callback', async (req, res) => {
 
         const tokenData = await response.json();
         
-        // Sitzung im Server-Speicher als verifiziert markieren
+        // sitzung im server-speicher als verifiziert markieren
         req.session.isAuthenticated = true;
         req.session.tokens = tokenData;
 
         await audit.logAudit({ actor: getActor(req), action: 'LOGIN_SUCCESS', ip: req.ip });
 
-        // HIER IST DIE GEÄNDERTE ZEILE: Weiterleitung exklusiv auf den Unterpfad /dashboard
+        // hier ist die geänderte zeile: weiterleitung exklusiv auf den unterpfad /dashboard
         res.redirect('/dashboard');
     } catch (error) {
         console.error('OIDC Fehler:', error.message);
@@ -143,7 +129,7 @@ app.get('/login/callback', async (req, res) => {
     }
 });
 
-// Logout-Route: Beendet die lokale Session und loggt den User aus Keycloak aus
+// logout-route: beendet die lokale session und loggt den user aus keycloak aus
 app.get('/logout', (req, res) => {
     req.session.destroy(() => {
         const logoutUrl = `${KEYCLOAK_URL}/protocol/openid-connect/logout?client_id=${CLIENT_ID}`;
@@ -157,32 +143,28 @@ app.post('/api/test-alarm-event', (req, res) => {
     res.json({ status: 'received', receivedAt });
 });
 
-// =========================================================================
-// 2. DIE AUTH-SCHRANKE (MIDDLEWARE)
-// =========================================================================
+// --- 2. die auth-schranke (middleware) ---
 const JEDER_ZUGRIFF_ERFORDERT_LOGIN = (req, res, next) => {
     if (req.session.isAuthenticated) {
-        return next(); // User ist eingeloggt, fahre fort
+        return next(); // user ist eingeloggt, fahre fort
     }
-    res.redirect('/login'); // Nicht eingeloggt? Ab zu Keycloak!
+    res.redirect('/login'); // nicht eingeloggt? ab zu keycloak!
 };
 
-// Schranke für alle folgenden Routen und statischen Dateien aktivieren!
+// schranke für alle folgenden routen und statischen dateien aktivieren!
 app.use(JEDER_ZUGRIFF_ERFORDERT_LOGIN);
 
-// Das Frontend wird erst NACH erfolgreichem Login freigegeben
+// das frontend wird erst nach erfolgreichem login freigegeben
 app.use(express.static('public'));
 
 app.get('/dashboard', (req, res) => {
     res.redirect('/');
 });
 
-// =========================================================================
-// 3. GESCHÜTZTE API-ROUTEN (Alle ab hier erfordern eine gültige Session)
-// =========================================================================
+// --- 3. geschützte api-routen (alle ab hier erfordern eine gültige session) ---
 
-// Liefert den aktuell eingeloggten Benutzer fürs Frontend (Anzeige in der Sidebar) -
-// dieselben Claims, die getActor() auch fürs Audit-Log verwendet.
+// liefert den aktuell eingeloggten benutzer fürs frontend (anzeige in der sidebar) -
+// dieselben claims, die getactor() auch fürs audit-log verwendet.
 app.get('/api/me', (req, res) => {
     const payload = decodeIdTokenPayload(req);
     res.json({
@@ -191,7 +173,7 @@ app.get('/api/me', (req, res) => {
     });
 });
 
-// Route: Holt alle Nodes von Headscale
+// route: holt alle nodes von headscale
 app.get('/api/nodes', async (req, res) => {
     try {
         const response = await fetch(`${HEADSCALE_URL}/api/v1/node`, {
@@ -206,7 +188,7 @@ app.get('/api/nodes', async (req, res) => {
     }
 });
 
-// 1. Node umbenennen
+// 1. node umbenennen
 app.post('/api/nodes/:id/rename/:newName', async (req, res) => {
     try {
         const { id, newName } = req.params;
@@ -224,7 +206,7 @@ app.post('/api/nodes/:id/rename/:newName', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// 2. Node löschen
+// 2. node löschen
 app.delete('/api/nodes/:id', async (req, res) => {
     try {
         const response = await fetch(`${HEADSCALE_URL}/api/v1/node/${req.params.id}`, {
@@ -240,7 +222,7 @@ app.delete('/api/nodes/:id', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// 3. Node-Sitzung ablaufen lassen (Expire)
+// 3. node-sitzung ablaufen lassen (expire)
 app.post('/api/nodes/:id/expire', async (req, res) => {
     try {
         const response = await fetch(`${HEADSCALE_URL}/api/v1/node/${req.params.id}/expire`, {
@@ -255,18 +237,17 @@ app.post('/api/nodes/:id/expire', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// 4. Node per ICMP anpingen (der Headpilot-Server ist ja selbst Tailnet-Peer, siehe SSH-Docker-Feature)
+// 4. node per icmp anpingen (der headpilot-server ist ja selbst tailnet-peer, siehe ssh-docker-feature)
 app.post('/api/nodes/ping', (req, res) => {
     const { ip } = req.body;
 
-    // Nur echte IPv4/IPv6-Zeichen zulassen - execFile geht zwar ohne Shell (kein Injection-Risiko),
-    // aber so bekommen wir bei Unsinn sofort einen sauberen 400 statt eines kryptischen ping-Fehlers.
+    // nur echte ipv4/ipv6-zeichen zulassen, sonst gibt's sauber 400 statt kryptischem ping-fehler
     if (!ip || !/^[0-9a-fA-F:.]+$/.test(ip)) {
         return res.status(400).json({ error: 'Ungültige IP-Adresse.' });
     }
 
-    // Ein Ping-Versuch, max. 2 Sekunden Wartezeit auf Antwort. macOS (Entwicklung) und
-    // Linux (Produktion) haben leicht unterschiedliche Flags für die Timeout-Angabe.
+    // ein ping-versuch, max. 2 sekunden wartezeit auf antwort. macos (entwicklung) und
+    // linux (produktion) haben leicht unterschiedliche flags für die timeout-angabe.
     const args = process.platform === 'darwin'
         ? ['-c', '1', '-t', '2', ip]
         : ['-c', '1', '-W', '2', ip];
@@ -280,9 +261,7 @@ app.post('/api/nodes/ping', (req, res) => {
     });
 });
 
-// 1. Alle Benutzer abrufen - inkl. Anzahl der ihnen zugeordneten Geräte, damit die Benutzer-
-// Seite mehr Kontext zeigen kann als nur den nackten Namen. Schlägt das Node-Fetch fehl,
-// wird die Anzahl einfach weggelassen (0), statt die ganze Seite zu blockieren.
+// 1. alle benutzer abrufen, inkl. geräte-anzahl pro user (0 falls node-fetch fehlschlägt)
 app.get('/api/users', async (req, res) => {
     try {
         const [userResponse, nodeResponse] = await Promise.all([
@@ -306,7 +285,7 @@ app.get('/api/users', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// 2. Neuen Benutzer erstellen
+// 2. neuen benutzer erstellen
 app.post('/api/users', async (req, res) => {
     try {
         const response = await fetch(`${HEADSCALE_URL}/api/v1/user`, {
@@ -321,7 +300,7 @@ app.post('/api/users', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// 3. Benutzer umbenennen
+// 3. benutzer umbenennen
 app.post('/api/users/:id/rename/:newName', async (req, res) => {
     try {
         const { id, newName } = req.params;
@@ -337,7 +316,7 @@ app.post('/api/users/:id/rename/:newName', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// 4. Benutzer löschen
+// 4. benutzer löschen
 app.delete('/api/users/:id', async (req, res) => {
     try {
         const response = await fetch(`${HEADSCALE_URL}/api/v1/user/${req.params.id}`, {
@@ -353,7 +332,7 @@ app.delete('/api/users/:id', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// --- PRE-AUTH KEYS ROUTEN ---
+// --- pre-auth keys routen ---
 app.get('/api/keys', async (req, res) => {
     try {
         const response = await fetch(`${HEADSCALE_URL}/api/v1/preauthkey`, {
@@ -405,15 +384,9 @@ app.post('/api/keys/expire', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// =========================================================================
-// SUBNET ROUTES
-// =========================================================================
-// Diese Headscale-Version hat keine eigenständige "/api/v1/routes"-Liste mit IDs mehr
-// (Aufruf liefert 404) - Routen leben stattdessen direkt am Node: "availableRoutes"
-// (per --advertise-routes vom Gerät angekündigt) und "approvedRoutes" (von einem Admin
-// genehmigt, per POST .../approve_routes gesetzt - ersetzt dabei IMMER die komplette
-// Liste für diesen Node, kein Toggle für eine einzelne Route). Wir bauen daraus pro
-// Node/Route-Kombination eine flache Liste, wie sie das Frontend braucht.
+// --- subnet routes ---
+// kein eigener "/api/v1/routes"-endpoint mehr, routen leben am node selbst ("availableroutes"
+// und "approvedroutes"). approve_routes ersetzt immer die ganze liste, kein einzel-toggle.
 app.get('/api/routes', async (req, res) => {
     try {
         const response = await fetch(`${HEADSCALE_URL}/api/v1/node`, {
@@ -429,8 +402,8 @@ app.get('/api/routes', async (req, res) => {
         (data.nodes || []).forEach(n => {
             const advertised = n.availableRoutes || [];
             const approved = n.approvedRoutes || [];
-            // Auch eine genehmigte, aber nicht mehr angekündigte Route mit anzeigen -
-            // sonst könnte man sie nie mehr über die UI wieder deaktivieren.
+            // auch eine genehmigte, aber nicht mehr angekündigte route mit anzeigen -
+            // sonst könnte man sie nie mehr über die ui wieder deaktivieren.
             const allRoutes = [...new Set([...advertised, ...approved])];
 
             allRoutes.forEach(route => {
@@ -448,9 +421,7 @@ app.get('/api/routes', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// Holt den aktuellen (frischen!) approvedRoutes-Stand eines Nodes und setzt ihn mit
-// der Ziel-Route hinzugefügt oder entfernt neu - approve_routes ersetzt immer die
-// komplette Liste, daher muss hier immer der volle, aktuelle Stand mitgeschickt werden.
+// approve_routes ersetzt immer die ganze liste, daher erst den aktuellen stand holen
 async function setNodeRouteApproval(nodeId, route, shouldApprove) {
     const nodeRes = await fetch(`${HEADSCALE_URL}/api/v1/node/${nodeId}`, {
         headers: { 'Authorization': `Bearer ${API_KEY}`, 'Accept': 'application/json' }
@@ -490,28 +461,19 @@ app.post('/api/routes/disable', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// =========================================================================
-// UPTIME KUMA STATUS
-// =========================================================================
-// Direkter Login mit echten Zugangsdaten (statt einer öffentlichen Status-Page mit Slug) -
-// Kuma bietet dafür keine normale REST-API, sondern nur seine Socket.IO-Schnittstelle
-// (dieselbe, die auch das Kuma-Webinterface selbst benutzt).
-// KUMA_URL zeigt direkt auf Kuma im Tailnet (z.B. http://100.x.x.x:3001) bzw. auf dem
-// VPS selbst auf http://127.0.0.1:3001. Bewusst KEIN Default: Fehlt eine der drei
-// Variablen, antwortet die Route sofort mit "configured: false" - ganz ohne Netzwerk-Request.
+// --- uptime kuma status ---
+// login per socket.io (kuma hat keine normale rest-api). fehlt eine der drei env-variablen,
+// antwortet die route sofort mit "configured: false", ganz ohne netzwerk-request.
 const { io: kumaIo } = require('socket.io-client');
 const KUMA_URL = process.env.KUMA_URL;
 const KUMA_USER = process.env.KUMA_USER;
 const KUMA_PASS = process.env.KUMA_PASS;
 const KUMA_TIMEOUT_MS = 3000;
 
-// Kuma-Heartbeat-Status-Codes: 0 = down, 1 = up, 2 = pending, 3 = maintenance
+// kuma-heartbeat-status-codes: 0 = down, 1 = up, 2 = pending, 3 = maintenance
 const KUMA_STATUS_MAP = { 0: 'down', 1: 'up', 2: 'pending', 3: 'maintenance' };
 
-// Öffnet eine Socket.IO-Verbindung zu Kuma, loggt sich ein und übergibt den fertig
-// eingeloggten Socket an "work" (muss ein Promise zurückgeben). Kümmert sich zentral um
-// Verbindungsfehler, Login-Fehler, Timeout und sauberes Trennen danach - jede Kuma-Aktion
-// (lesen, anlegen, bearbeiten, löschen) nutzt dieselbe Grundlage.
+// login bei kuma, übergibt den socket an "work" (promise), trennt danach sauber wieder.
 function withKumaLogin(work) {
     return new Promise((resolve, reject) => {
         if (!KUMA_URL || !KUMA_USER || !KUMA_PASS) {
@@ -544,18 +506,16 @@ function withKumaLogin(work) {
     });
 }
 
-// Sammelt für jeden Monitor Name, Typ, Ziel, aktuellen Status, 24h-Uptime% und letzte
-// Antwortzeit. Kuma schickt diese Infos nach dem Login nicht auf einen Schlag, sondern über
-// mehrere einzelne Events pro Monitor, deshalb sammeln wir, bis wir für jeden bekannten
-// Monitor sowohl Heartbeat als auch Uptime haben (oder der Timeout zuerst greift).
-// Wie viele der letzten Heartbeats für die Verlaufs-Leiste (wie im Kuma-Dashboard) mitgeschickt werden
+// sammelt name/typ/status/uptime/antwortzeit pro monitor. kuma schickt das über mehrere
+// events statt auf einmal, deshalb sammeln bis alles da ist (oder timeout)
+// länge der heartbeat-verlaufs-leiste (wie im kuma-dashboard)
 const KUMA_HEARTBEAT_BAR_LENGTH = 50;
 
 function fetchKumaMonitors() {
     return withKumaLogin((socket) => new Promise((resolve) => {
-        const monitorsById = {}; // monitorId -> { name, type, target, port }
-        const heartbeatLists = {}; // monitorId -> voller Heartbeat-Verlauf (neueste zuletzt)
-        const uptimes = {};      // monitorId -> 24h-Uptime (0-1)
+        const monitorsById = {}; // monitorid -> { name, type, target, port }
+        const heartbeatLists = {}; // monitorid -> voller heartbeat-verlauf (neueste zuletzt)
+        const uptimes = {};      // monitorid -> 24h-uptime (0-1)
         let expectedIds = null;
 
         function finish() {
@@ -571,7 +531,7 @@ function fetchKumaMonitors() {
                     status: lastBeat ? (KUMA_STATUS_MAP[lastBeat.status] || 'unknown') : 'unknown',
                     uptime24h: typeof uptimes[id] === 'number' ? Math.round(uptimes[id] * 1000) / 10 : null,
                     responseTimeMs: lastBeat && typeof lastBeat.ping === 'number' ? lastBeat.ping : null,
-                    // Verlaufs-Leiste wie im Kuma-Dashboard: die letzten N Heartbeats als einfache Status-Liste
+                    // verlaufs-leiste wie im kuma-dashboard: die letzten n heartbeats als einfache status-liste
                     heartbeatBar: beats.slice(-KUMA_HEARTBEAT_BAR_LENGTH).map(b => KUMA_STATUS_MAP[b.status] || 'unknown')
                 };
             }));
@@ -593,7 +553,7 @@ function fetchKumaMonitors() {
                     port: list[id].type === 'port' ? list[id].port : null
                 };
             });
-            if (expectedIds.length === 0) finish(); // keine Monitore vorhanden
+            if (expectedIds.length === 0) finish(); // keine monitore vorhanden
         });
 
         socket.on('heartbeatList', (monitorId, list) => {
@@ -610,14 +570,8 @@ function fetchKumaMonitors() {
     }));
 }
 
-// Baut aus den vereinfachten Formularfeldern (Name/Typ/Ziel/Port/Intervall) das Monitor-
-// Objekt im von Kuma erwarteten Format. Bewusst nur die 3 gängigsten Typen unterstützt.
-// Kuma verarbeitet beim Anlegen/Bearbeiten offenbar ALLE möglichen Monitor-Felder (auch die für
-// ganz andere Typen wie Kafka/RADIUS/gRPC/MQTT/OAuth/Datenbank), unabhängig vom gewählten Typ -
-// fehlt eines davon, crasht Kuma intern ("Cannot read properties of undefined (reading 'every')").
-// Live herausgefunden, indem ein echtes, komplettes Monitor-Objekt aus Kuma schrittweise auf die
-// tatsächlich nötigen Felder reduziert wurde. Deshalb hier ein vollständiges Set neutraler
-// Defaults für alle Typen, nicht nur für die drei (http/port/ping), die wir selbst anbieten.
+// baut das monitor-objekt im kuma-format. kuma braucht beim anlegen alle möglichen
+// felder (auch fremder typen), sonst crasht es intern, daher volle defaults für alle typen
 function kumaMonitorDefaults({ type, interval }) {
     const checkInterval = Number(interval) || 60;
     return {
@@ -697,11 +651,8 @@ function kumaMonitorDefaults({ type, interval }) {
     };
 }
 
-// Reine Ausgabe-/Berechnungsfelder, die getMonitor zwar mitliefert, "editMonitor" aber weder
-// kennt noch akzeptiert (führt sonst zu SQL-Fehlern à la "no column named ..."). Ebenfalls live
-// herausgefunden, indem jedes einzelne verursachende Feld nacheinander entfernt wurde.
-// WICHTIG: "id" bewusst NICHT in dieser Liste - editMonitor braucht sie im Objekt selbst, um zu
-// wissen, welcher Datensatz gemeint ist (führt sonst zu "Undefined binding(s) ... id = ?").
+// felder, die getmonitor mitliefert, editmonitor aber ablehnt (sql-fehler sonst). "id" bleibt
+// draußen, weil editmonitor die braucht um den datensatz zu finden
 const KUMA_MONITOR_READONLY_FIELDS = [
     'childrenIDs', 'pathName', 'parent',
     'forceInactive', 'includeSensitiveData', 'maintenance', 'screenshot', 'tags'
@@ -723,9 +674,8 @@ function buildKumaMonitorPayload({ type, name, target, port, interval }) {
     return payload;
 }
 
-// Überträgt die vereinfachten Formularfelder auf ein bereits bestehendes, vollständiges
-// Kuma-Monitor-Objekt (Kumas "editMonitor" erwartet immer das komplette Objekt zurück,
-// kein Teil-Update - alle nicht angefassten Felder bleiben also einfach wie sie waren).
+// überträgt die formularfelder auf das bestehende monitor-objekt (editmonitor erwartet
+// immer das ganze objekt zurück, kein teil-update).
 function applyKumaMonitorFields(existing, { name, target, port, interval }) {
     const updated = { ...existing };
     if (name !== undefined && name !== '') updated.name = name;
@@ -751,7 +701,7 @@ function validateMonitorInput(body) {
     return null;
 }
 
-// Route: Uptime-Kuma-Status für die "Status"-Ansicht
+// route: uptime-kuma-status für die "status"-ansicht
 app.get('/api/status', async (req, res) => {
     if (!KUMA_URL || !KUMA_USER || !KUMA_PASS) {
         return res.json({ configured: false });
@@ -761,14 +711,14 @@ app.get('/api/status', async (req, res) => {
         const monitors = await fetchKumaMonitors();
         res.json({ configured: true, available: true, monitors });
     } catch (error) {
-        // Timeout, Verbindungsfehler oder falsche Zugangsdaten - Dashboard bleibt in
-        // jedem Fall nutzbar, wir melden nur "nicht erreichbar".
+        // timeout, verbindungsfehler oder falsche zugangsdaten, dashboard bleibt trotzdem
+        // nutzbar, wir melden nur "nicht erreichbar"
         console.error('Uptime Kuma nicht erreichbar:', error.message);
         res.json({ configured: true, available: false });
     }
 });
 
-// Route: neuen Kuma-Monitor anlegen
+// route: neuen kuma-monitor anlegen
 app.post('/api/status/monitors', async (req, res) => {
     const validationError = validateMonitorInput(req.body);
     if (validationError) return res.status(400).json({ error: validationError });
@@ -787,7 +737,7 @@ app.post('/api/status/monitors', async (req, res) => {
     }
 });
 
-// Route: bestehenden Kuma-Monitor bearbeiten (der Typ selbst bleibt fix, nur Name/Ziel/Port/Intervall änderbar)
+// route: bestehenden kuma-monitor bearbeiten (der typ selbst bleibt fix, nur name/ziel/port/intervall änderbar)
 app.put('/api/status/monitors/:id', async (req, res) => {
     if (!req.body.name || !String(req.body.name).trim()) return res.status(400).json({ error: 'Name wird benötigt.' });
     if (!req.body.target || !String(req.body.target).trim()) return res.status(400).json({ error: 'Ziel (URL/Host) wird benötigt.' });
@@ -810,7 +760,7 @@ app.put('/api/status/monitors/:id', async (req, res) => {
     }
 });
 
-// Route: Kuma-Monitor löschen
+// route: kuma-monitor löschen
 app.delete('/api/status/monitors/:id', async (req, res) => {
     try {
         await withKumaLogin((socket) => new Promise((resolve, reject) => {
@@ -826,16 +776,9 @@ app.delete('/api/status/monitors/:id', async (req, res) => {
     }
 });
 
-// =========================================================================
-// DISCORD-BENACHRICHTIGUNG (Status-Reiter)
-// =========================================================================
-// Bewusst nur EINE Discord-Benachrichtigung, ein/aus schaltbar - mehr braucht es nicht.
-// Kuma selbst hat kein "aktiv/pausiert"-Feld, das über die API wirklich funktioniert (das
-// "active"-Feld wird beim Anlegen immer stillschweigend auf true zurückgesetzt, egal was man
-// schickt - live gegengetestet). Der Schalter wird deshalb über Anlegen/Löschen simuliert:
-// "Aus" entfernt die Benachrichtigung komplett aus Kuma (stoppt sofort alle Alerts), "Ein"
-// legt sie mit der gemerkten URL neu an. Die URL selbst merkt sich Headpilot lokal (Datei
-// unter data/), damit man sie beim Wiedereinschalten nicht erneut eintippen muss.
+// --- discord-benachrichtigung (status-reiter) ---
+// nur eine, ein/aus schaltbar. kumas "active"-feld wirkt nicht, schalter simuliert
+// das über anlegen/löschen, die url merkt sich headpilot lokal unter data/
 const NOTIFICATION_CONFIG_PATH = path.join(__dirname, 'data', 'notification-config.json');
 const HEADPILOT_NOTIFICATION_NAME = 'Headpilot Discord';
 
@@ -854,16 +797,14 @@ function writeNotificationConfig(config) {
 
 function fetchKumaNotifications() {
     return withKumaLogin((socket) => new Promise((resolve) => {
-        // Kuma schickt "notificationList" von selbst direkt nach dem Login.
-        // "config" ist bei Kuma ein JSON-STRING (nicht verschachteltes Objekt).
+        // kuma schickt "notificationlist" von selbst direkt nach dem login.
+        // "config" ist bei kuma ein json-string (nicht verschachteltes objekt).
         socket.on('notificationList', (list) => resolve(list || []));
     }));
 }
 
-// Legt Headpilots eigene Discord-Benachrichtigung an oder bearbeitet sie - anhand des festen
-// Namens identifiziert, damit andere, manuell in Kuma angelegte Benachrichtigungen (falls
-// vorhanden) unangetastet bleiben. "isDefault"/"applyExisting" wenden sie automatisch auf
-// alle (auch künftige) Dienste an, ohne manuelle Zuweisung pro Monitor.
+// legt headpilots discord-benachrichtigung an/bearbeitet sie, per festem namen erkannt,
+// damit andere, manuell angelegte kuma-benachrichtigungen unangetastet bleiben.
 async function syncHeadpilotNotification({ webhookUrl, enabled }) {
     const existing = (await fetchKumaNotifications()).find(n => n.name === HEADPILOT_NOTIFICATION_NAME);
 
@@ -925,12 +866,12 @@ app.post('/api/status/notification', async (req, res) => {
 const { Client } = require('ssh2');
 const sshVault = require('./sshVault');
 
-// docker ps -a listet ALLE Container (auch gestoppte). {{json .}} lässt Docker selbst
-// sauber escaptes JSON pro Zeile ausgeben, statt es uns per Hand (fehleranfällig) zusammenzubauen.
+// docker ps -a listet alle container (auch gestoppte). {{json .}} lässt docker selbst
+// sauber escaptes json pro zeile ausgeben, statt es uns per hand (fehleranfällig) zusammenzubauen.
 const DOCKER_PS_CMD = "docker ps -a --format '{{json .}}'";
 
-// Führt einen Befehl über eine bestehende SSH-Verbindung aus und sammelt stdout/stderr/exit-code.
-// Optional kann etwas auf stdin geschrieben werden (z.B. das Passwort für "sudo -S").
+// führt einen befehl über eine bestehende ssh-verbindung aus und sammelt stdout/stderr/exit-code.
+// optional kann etwas auf stdin geschrieben werden (z.b. das passwort für "sudo -s").
 function execOverSsh(conn, cmd, stdinData) {
     return new Promise((resolve, reject) => {
         conn.exec(cmd, (err, stream) => {
@@ -948,8 +889,8 @@ function execOverSsh(conn, cmd, stdinData) {
     });
 }
 
-// Typische Meldung, wenn der SSH-User zwar eingeloggt ist, aber nicht auf den Docker-Socket darf
-// (sehr häufig auf frisch aufgesetzten Servern, wenn der User nicht in der "docker"-Gruppe ist)
+// typische meldung, wenn der ssh-user zwar eingeloggt ist, aber nicht auf den docker-socket darf
+// (sehr häufig auf frisch aufgesetzten servern, wenn der user nicht in der "docker"-gruppe ist)
 function isPermissionDenied(stderr) {
     return /permission denied|dial unix.*docker\.sock/i.test(stderr);
 }
@@ -958,21 +899,21 @@ function isDockerNotFound(stderr) {
     return /command not found|no such file/i.test(stderr);
 }
 
-// Metadaten zu gespeicherten SSH-Zugangsdaten für eine Node - liefert NIE das Passwort zurück
+// metadaten zu gespeicherten ssh-zugangsdaten, liefert nie das passwort zurück
 app.get('/api/nodes/:id/ssh-credentials', (req, res) => {
-    // Ohne das würde der Browser eine frühere "saved: false"-Antwort (von vor dem Speichern)
-    // cachen und nach einem Reload weiter anzeigen, dass nichts gespeichert sei.
+    // ohne das würde der browser eine frühere "saved: false"-antwort (von vor dem speichern)
+    // cachen und nach einem reload weiter anzeigen, dass nichts gespeichert sei.
     res.set('Cache-Control', 'no-store');
     res.json(sshVault.getCredentialsInfo(req.params.id));
 });
 
-// Entfernt gespeicherte SSH-Zugangsdaten für eine Node wieder
+// entfernt gespeicherte ssh-zugangsdaten für eine node wieder
 app.delete('/api/nodes/:id/ssh-credentials', (req, res) => {
     sshVault.deleteCredentials(req.params.id);
     res.json({ ok: true });
 });
 
-// Route: SSH Login und Docker Container abfragen
+// route: ssh login und docker container abfragen
 app.post('/api/nodes/ssh-docker', (req, res) => {
     const { ip, nodeId, remember } = req.body;
     let { username, password } = req.body;
@@ -981,7 +922,7 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
         return res.status(400).json({ error: 'IP wird benötigt.' });
     }
 
-    // Keine Zugangsdaten im Request? Dann schauen, ob für diese Node welche im Vault liegen
+    // keine zugangsdaten im request? dann schauen, ob für diese node welche im vault liegen
     if ((!username || !password) && nodeId) {
         const saved = sshVault.getCredentials(nodeId);
         if (saved) {
@@ -994,7 +935,7 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
         return res.status(400).json({ error: 'Benutzername und Passwort werden benötigt.' });
     }
 
-    // Verhindert "Cannot set headers after they are sent", falls 'error' nach 'ready' feuert
+    // verhindert "cannot set headers after they are sent", falls 'error' nach 'ready' feuert
     let responded = false;
     let credentialsSaved = false;
     const respond = (status, body) => {
@@ -1006,8 +947,8 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
     const conn = new Client();
 
     conn.on('ready', async () => {
-        // Erst JETZT (nach erfolgreicher SSH-Authentifizierung) auf Wunsch verschlüsselt speichern -
-        // so landen nie falsche/ungeprüfte Zugangsdaten im Vault.
+        // erst jetzt (nach erfolgreicher ssh-authentifizierung) auf wunsch verschlüsselt speichern -
+        // so landen nie falsche/ungeprüfte zugangsdaten im vault.
         if (remember && nodeId) {
             try {
                 sshVault.saveCredentials(nodeId, username, password);
@@ -1020,16 +961,16 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
         try {
             let result = await execOverSsh(conn, DOCKER_PS_CMD);
 
-            // Kein Zugriff auf den Docker-Socket? Automatisch mit sudo erneut versuchen
-            // (Passwort wird direkt über stdin an "sudo -S" übergeben, landet also nicht im Prozess-Log).
+            // kein zugriff auf den docker-socket? automatisch mit sudo erneut versuchen
+            // (passwort wird direkt über stdin an "sudo -s" übergeben, landet also nicht im prozess-log).
             if (result.code !== 0 && isPermissionDenied(result.stderr)) {
                 result = await execOverSsh(conn, `sudo -S -p '' ${DOCKER_PS_CMD}`, password + '\n');
             }
 
             conn.end();
 
-            // Kein Output UND ein Fehler-Code -> Docker ist vermutlich nicht installiert
-            // oder nicht im PATH der (nicht-interaktiven) SSH-Session (häufig bei NAS-Systemen)
+            // kein output und ein fehler-code -> docker ist vermutlich nicht installiert
+            // oder nicht im path der (nicht-interaktiven) ssh-session (häufig bei nas-systemen)
             if (result.code !== 0 && result.stdout.trim() === '') {
                 console.error(`Docker-Befehl auf ${ip} fehlgeschlagen (Exit ${result.code}): ${result.stderr.trim()}`);
                 return respond(500, {
@@ -1042,15 +983,15 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
             }
 
             try {
-                // Docker gibt pro Zeile ein eigenes JSON-Objekt aus
+                // docker gibt pro zeile ein eigenes json-objekt aus
                 const containers = result.stdout.trim().split('\n')
                     .filter(line => line.length > 0)
                     .map(line => JSON.parse(line))
                     .map(c => ({
                         id: c.ID,
                         name: c.Names,
-                        state: c.State,       // z.B. "running", "exited", "paused", "restarting"
-                        status: c.Status,     // z.B. "Up 3 hours" oder "Exited (0) 2 days ago"
+                        state: c.State,       // z.b. "running", "exited", "paused", "restarting"
+                        status: c.Status,     // z.b. "up 3 hours" oder "exited (0) 2 days ago"
                         image: c.Image,
                         ports: c.Ports,
                         runningFor: c.RunningFor
@@ -1066,18 +1007,18 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
             respond(500, { error: 'Docker-Befehl konnte nicht ausgeführt werden.' });
         }
     }).on('error', (err) => {
-        // Genauere Fehlerursache loggen, statt sie hinter einer generischen Meldung zu verstecken
+        // genauere fehlerursache loggen, statt sie hinter einer generischen meldung zu verstecken
         console.error(`SSH-Fehler bei ${username}@${ip}: [${err.level || err.code || 'unknown'}] ${err.message}`);
 
         let message = `SSH-Verbindung fehlgeschlagen: ${err.message}`;
         if (err.level === 'client-authentication') {
             message = 'SSH Login fehlgeschlagen: Benutzername oder Passwort falsch (oder Passwort-Login für diesen User deaktiviert).';
         } else if (err.code === 'ETIMEDOUT') {
-            // TCP-Verbindung kam nie zustande -> der Headpilot-Server selbst hat keine Route zur VPN-IP
-            // des Geräts (er müsste dafür selbst als Tailscale/Headscale-Client im gleichen Tailnet hängen).
+            // tcp-verbindung kam nie zustande -> der headpilot-server selbst hat keine route zur vpn-ip
+            // des geräts (er müsste dafür selbst als tailscale/headscale-client im gleichen tailnet hängen).
             message = 'Zeitüberschreitung: Der Headpilot-Server erreicht diese VPN-IP nicht (keine TCP-Verbindung möglich). Läuft auf dem Server, der Headpilot hostet, selbst ein verbundener Tailscale/Headscale-Client?';
         } else if (err.level === 'client-timeout') {
-            // TCP hat verbunden, aber die SSH-Handshake kam nicht rechtzeitig zustande
+            // tcp hat verbunden, aber die ssh-handshake kam nicht rechtzeitig zustande
             message = 'Zeitüberschreitung: TCP-Verbindung stand, aber der SSH-Handshake wurde nicht abgeschlossen (Port 22 offen, aber evtl. kein SSH-Dienst oder sehr langsame Antwort).';
         } else if (err.code === 'ECONNREFUSED') {
             message = 'Verbindung abgelehnt: Auf Port 22 läuft kein SSH-Dienst (ist SSH auf dem Gerät aktiviert?).';
@@ -1093,26 +1034,14 @@ app.post('/api/nodes/ssh-docker', (req, res) => {
         port: 22,
         username: username,
         password: password,
-        // Manche Geräte (v.a. NAS-Systeme) hängen erst mal am Reverse-DNS-Lookup der
-        // anfragenden IP, bevor sie das SSH-Banner senden - über Tailscale-IPs (kein PTR-Eintrag)
-        // kann das mehrere Sekunden dauern. 8s war dafür oft zu knapp.
+        // manche geräte (nas) brauchen wegen reverse-dns-lookup länger fürs ssh-banner
         readyTimeout: 20000
     });
 });
 
-// =========================================================================
-// NETZWERK-GRAPH
-// =========================================================================
-// Liefert die Rohdaten für die grafische Tailnet-Übersicht ("Netzwerk"-Reiter): welche Nodes
-// sind registriert (inkl. online/offline, Besitzer, Kontaktdaten) und welche Subnet-Routes sind
-// für welchen Node genehmigt. WICHTIG: Headscale/Tailscale ist ein Full-Mesh-Netzwerk - es gibt
-// keine zentral gespeicherte Peer-zu-Peer-Verbindungsinfo. Das hier ist also KEINE Live-
-// Verbindungsvisualisierung, sondern zeigt ausschließlich reale Registrierungs- und Routing-
-// Daten, wie sie auch "headscale nodes list"/"list-routes" liefern würden.
-//
-// Docker-Dienste, Kuma-Monitore und eine nmap-basierte LAN-Erkennung hinter den Subnet-Routes
-// waren hier testweise mit dabei, funktionierten jeweils technisch, wurden aber auf Wunsch
-// wieder entfernt - optisch hat keine der beiden Erweiterungen überzeugt.
+// --- netzwerk-graph ---
+// liefert nodes und genehmigte routes für den "netzwerk"-graphen, keine live-verbindungsanzeige
+// (full-mesh, keine zentrale peer-info), nur registrierungs- und routingdaten
 app.get('/api/network-graph', async (req, res) => {
     try {
         const response = await fetch(`${HEADSCALE_URL}/api/v1/node`, {
@@ -1136,8 +1065,7 @@ app.get('/api/network-graph', async (req, res) => {
                 ipAddresses: n.ipAddresses || [],
                 owner: n.user?.displayName || n.user?.name || null
             });
-            // Nur genehmigte Routes gehören ins Bild - eine bloß angekündigte, aber (noch)
-            // nicht freigegebene Route führt ja tatsächlich zu keinem Traffic.
+            // nur genehmigte routes gehören ins bild, eine bloß angekündigte route bringt ja keinen traffic
             (n.approvedRoutes || []).forEach(cidr => routes.push({ nodeId: n.id, cidr }));
         });
 
@@ -1145,12 +1073,8 @@ app.get('/api/network-graph', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// =========================================================================
-// AUDIT LOG
-// =========================================================================
-// Gleiches Drei-Zustands-Prinzip wie bei Kuma: "configured: false" ohne DATABASE_URL
-// (kein Verbindungsversuch), "available: false" bei einem echten DB-Fehler, sonst die
-// Einträge.
+// --- audit log ---
+// wie bei kuma: "configured: false" ohne database_url, "available: false" bei db-fehler.
 app.get('/api/audit', async (req, res) => {
     if (!audit.isConfigured()) {
         return res.json({ configured: false });
@@ -1168,7 +1092,7 @@ app.get('/api/audit', async (req, res) => {
 });
 
 
-// Server starten
+// server starten
 app.listen(PORT, () => {
     console.log(`🚀 Headpilot Backend läuft gesichert auf http://localhost:${PORT}`);
 });

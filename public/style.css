@@ -1,6 +1,4 @@
-/* =========================================================================
-   RESET
-   ========================================================================= */
+/* --- reset --- */
 * {
     box-sizing: border-box;
     margin: 0;
@@ -19,7 +17,7 @@
     --danger: #b91c1c;
     --danger-bg: #fdf2f2;
     --success: #16a34a;
-    --warning: #d97706; /* nur für "wartet auf Genehmigung" bei Subnet Routes verwendet */
+    --warning: #d97706; /* nur für "wartet auf genehmigung" bei subnet routes verwendet */
     --sidebar-bg: #18181b;
     --sidebar-border: #29292e;
     --sidebar-text: #9a9aa2;
@@ -35,12 +33,10 @@ body {
     color: var(--text);
     display: flex;
     height: 100vh;
-    overflow: hidden; /* Verhindert das Scrollen der ganzen Seite */
+    overflow: hidden; /* verhindert das scrollen der ganzen seite */
 }
 
-/* =========================================================================
-   SIDEBAR
-   ========================================================================= */
+/* --- sidebar --- */
 .sidebar {
     width: 250px;
     flex-shrink: 0;
@@ -113,8 +109,8 @@ body {
     margin-bottom: 4px;
 }
 
-/* Wie an mehreren Stellen in dieser App: eine Klasse mit "display: flex" überschreibt sonst
-   das [hidden]-Attribut (Autoren-CSS schlägt UA-Default bei gleicher Spezifität). */
+/* wie an mehreren stellen in dieser app: eine klasse mit "display: flex" überschreibt sonst
+   das [hidden]-attribut (autoren-css schlägt ua-default bei gleicher spezifität). */
 .sidebar-user[hidden] {
     display: none;
 }
@@ -162,13 +158,11 @@ body {
     color: var(--sidebar-text-active);
 }
 
-/* =========================================================================
-   MAIN CONTENT
-   ========================================================================= */
+/* --- main content --- */
 .main-content {
     flex: 1;
     padding: 40px;
-    overflow-y: auto; /* Erlaubt das Scrollen nur im Hauptbereich */
+    overflow-y: auto; /* erlaubt das scrollen nur im hauptbereich */
     opacity: 1;
     transform: translateY(0);
     transition: opacity 0.15s ease, transform 0.15s ease;
@@ -192,9 +186,7 @@ body {
     font-size: 0.9rem;
 }
 
-/* =========================================================================
-   CARDS
-   ========================================================================= */
+/* --- cards --- */
 .card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -209,9 +201,7 @@ code {
     color: var(--text-muted);
 }
 
-/* =========================================================================
-   ACTION BAR (Nodes / Users / Keys toolbars)
-   ========================================================================= */
+/* --- action bar (nodes / users / keys toolbars) --- */
 .action-bar {
     display: flex;
     align-items: center;
@@ -260,9 +250,7 @@ code {
     margin-left: auto;
 }
 
-/* =========================================================================
-   BUTTONS (verwendet auf Nodes / Users / Keys)
-   ========================================================================= */
+/* --- buttons (verwendet auf nodes / users / keys) --- */
 .btn,
 .btn-primary,
 .btn-danger,
@@ -328,9 +316,7 @@ code {
     transform: scale(0.97);
 }
 
-/* =========================================================================
-   NODES: Karten-Ansicht (statt Tabelle)
-   ========================================================================= */
+/* --- nodes: karten-ansicht (statt tabelle) --- */
 .nodes-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -379,20 +365,20 @@ code {
     background: var(--success);
 }
 
-/* Für die Kuma-Status-Karten: "down" ist der einzige Fall auf der Status-Seite,
-   der wirklich ein Problem meldet - daher die einzige Stelle mit Rot als Status-Punkt. */
+/* für die kuma-status-karten: "down" ist der einzige fall auf der status-seite,
+   der wirklich ein problem meldet - daher die einzige stelle mit rot als status-punkt. */
 .status-dot.down {
     background: var(--danger);
 }
 
-/* Für Subnet Routes: eine angekündigte, aber noch nicht genehmigte Route */
+/* für subnet routes: eine angekündigte, aber noch nicht genehmigte route */
 .status-dot.pending {
     background: var(--warning);
 }
 
-/* Klassische, dezente "Ping"-Ripple - dasselbe Prinzip wie bei den meisten
-   Live-Status-Indikatoren (z.B. Tailwind's animate-ping): ein auslaufender Ring
-   in derselben Farbe wie der Punkt selbst, keine Extra-Farbe nötig. */
+/* klassische, dezente "ping"-ripple - dasselbe prinzip wie bei den meisten
+   live-status-indikatoren (z.b. tailwind's animate-ping): ein auslaufender ring
+   in derselben farbe wie der punkt selbst, keine extra-farbe nötig. */
 .status-dot.pinging::after {
     content: '';
     position: absolute;
@@ -440,8 +426,8 @@ code {
     color: var(--danger);
 }
 
-/* Eigenständiger runder Icon-Button statt Text-Button - bewusst anders als die
-   übrigen Aktionen unten, aber genauso reduziert: nur Rahmen, keine Füllfarbe. */
+/* eigenständiger runder icon-button statt text-button - bewusst anders als die
+   übrigen aktionen unten, aber genauso reduziert: nur rahmen, keine füllfarbe. */
 .ping-icon-btn {
     display: inline-flex;
     align-items: center;
@@ -505,9 +491,7 @@ code {
     padding-top: 4px;
 }
 
-/* =========================================================================
-   DOCKER DIENSTE: eigener Reiter (Sektionen mit Tabelle statt Karten-Grid)
-   ========================================================================= */
+/* --- docker dienste --- */
 .docker-node-list {
     display: flex;
     flex-direction: column;
@@ -660,9 +644,7 @@ code {
     color: var(--text-muted);
 }
 
-/* =========================================================================
-   MODAL (SSH-Zugang)
-   ========================================================================= */
+/* --- modal (ssh-zugang) --- */
 .modal-overlay {
     position: fixed;
     inset: 0;
@@ -674,8 +656,8 @@ code {
     padding: 20px;
 }
 
-/* Ohne diese Regel gewinnt "display: flex" oben gegen das UA-Standardverhalten
-   von [hidden] und das Modal bleibt trotz hidden-Attribut sichtbar. */
+/* ohne diese regel gewinnt "display: flex" oben gegen das ua-standardverhalten
+   von [hidden] und das modal bleibt trotz hidden-attribut sichtbar. */
 .modal-overlay[hidden] {
     display: none;
 }
@@ -748,11 +730,9 @@ code {
     margin-top: 6px;
 }
 
-/* =========================================================================
-   STATUS (Uptime Kuma)
-   ========================================================================= */
-/* Ein Dienst pro Zeile (wie im Kuma-Dashboard) statt eines Karten-Grids - dadurch bekommt
-   auch die Heartbeat-Leiste genug Breite, um vernünftig auszusehen. */
+/* --- status (uptime kuma) --- */
+/* ein dienst pro zeile (wie im kuma-dashboard) statt eines karten-grids - dadurch bekommt
+   auch die heartbeat-leiste genug breite, um vernünftig auszusehen. */
 .status-grid {
     display: flex;
     flex-direction: column;
@@ -788,8 +768,8 @@ code {
     color: var(--text-muted);
 }
 
-/* Verlaufs-Leiste wie im Kuma-Dashboard: schmale, FESTE Balkenbreite statt gestreckt
-   (Kuma streckt die Balken nie auf die volle Breite - überschüssiger Platz bleibt frei) */
+/* verlaufs-leiste wie im kuma-dashboard: schmale, feste balkenbreite statt gestreckt
+   (kuma streckt die balken nie auf die volle breite - überschüssiger platz bleibt frei) */
 .status-heartbeat-bar {
     display: flex;
     align-items: flex-end;
@@ -831,7 +811,7 @@ code {
     gap: 8px;
 }
 
-/* Dezenter Platzhalter beim ersten Laden - reine CSS-Puls-Animation, keine Library */
+/* dezenter platzhalter beim ersten laden, reine css-puls-animation, keine library */
 .status-skeleton {
     min-height: 96px;
     background: var(--bg);
@@ -849,10 +829,7 @@ code {
     font-size: 0.9rem;
 }
 
-/* =========================================================================
-   ANLEITUNG MIT COPY-BEFEHLEN (Subnet Routes) - eingeklappt per natives <details>,
-   damit sie nicht im Weg steht, aber ohne eigenes JS für Auf-/Zuklappen auskommt.
-   ========================================================================= */
+/* --- anleitung mit copy-befehlen (subnet routes) --- */
 .route-howto {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -908,16 +885,13 @@ code {
     background: #232328;
 }
 
-/* =========================================================================
-   AUDIT-LOG-FEED (Startseite): klassischer, dunkler Log-/Terminal-Look -
-   bewusst unabhängig vom Rest der (hellen) App, genau wie man es von Logs kennt.
-   ========================================================================= */
+/* --- audit-log-feed (startseite) --- */
 .audit-log-console {
     background: #0b0b0c;
     border-radius: var(--radius);
     padding: 14px 16px;
-    flex: 1; /* füllt die Kachel bis zur Höhe der Netzwerk-Graph-Kachel daneben (gleiche Grid-Zeile) */
-    min-height: 0; /* nötig, damit overflow-y in einem Flex-Kind tatsächlich greift */
+    flex: 1; /* füllt die kachel bis zur höhe der netzwerk-graph-kachel daneben (gleiche grid-zeile) */
+    min-height: 0; /* nötig, damit overflow-y in einem flex-kind tatsächlich greift */
     overflow-y: auto;
     font-family: "SFMono-Regular", Consolas, monospace;
     font-size: 0.78rem;
@@ -934,9 +908,7 @@ code {
     color: #71717a;
 }
 
-/* =========================================================================
-   DISCORD-BENACHRICHTIGUNG (Status-Reiter) - bewusst nur ein einzelner Ein/Aus-Schalter
-   ========================================================================= */
+/* --- discord-benachrichtigung (status-reiter) --- */
 .notification-card {
     margin-bottom: 20px;
 }
@@ -968,8 +940,8 @@ code {
     white-space: nowrap;
 }
 
-/* iOS-artiger Schalter - ein normales Checkbox-Input, nur visuell umgebaut (bewährter
-   reiner CSS-Trick, keine Bibliothek nötig) */
+/* ios-artiger schalter - ein normales checkbox-input, nur visuell umgebaut (bewährter
+   reiner css-trick, keine bibliothek nötig) */
 .ios-toggle {
     position: relative;
     display: inline-block;
@@ -1044,10 +1016,7 @@ code {
     border-color: var(--text-subtle);
 }
 
-/* =========================================================================
-   NETZWERK (Graph-Ansicht des Tailnets über vis-network) - eine Kachel auf der Startseite,
-   Geräte-/Online-/Routen-Zahlen liefern dort bereits die normalen Stat-Karten mit.
-   ========================================================================= */
+/* --- netzwerk (graph-ansicht via vis-network) --- */
 .network-graph-wrap {
     position: relative;
     background: var(--surface);
@@ -1058,11 +1027,11 @@ code {
 
 .network-graph {
     width: 100%;
-    height: 440px; /* konkrete Höhe für die Dashboard-Kachel (public/views/dashboard.html überschreibt bei Bedarf) */
+    height: 440px; /* konkrete höhe für die dashboard-kachel (public/views/dashboard.html überschreibt bei bedarf) */
 }
 
-/* vis-network zeichnet Kanten/Knoten selbst; nur die Tooltip-Box optisch an den
-   Rest der App angleichen (Default von vis-network ist ein gelbes HTML-Tooltip). */
+/* vis-network zeichnet kanten/knoten selbst; nur die tooltip-box optisch an den
+   rest der app angleichen (default von vis-network ist ein gelbes html-tooltip). */
 .vis-tooltip {
     background: var(--text) !important;
     color: var(--surface) !important;
@@ -1085,8 +1054,8 @@ code {
     font-size: 0.9rem;
 }
 
-/* Wie schon beim SSH-Modal: eine Klasse mit "display: flex" überschrieb sonst das
-   [hidden]-Attribut (Autoren-CSS schlägt UA-Default bei gleicher Spezifität). */
+/* wie schon beim ssh-modal: eine klasse mit "display: flex" überschrieb sonst das
+   [hidden]-attribut (autoren-css schlägt ua-default bei gleicher spezifität). */
 .network-empty-hint[hidden] {
     display: none;
 }
@@ -1113,8 +1082,8 @@ code {
     background: var(--text-subtle);
 }
 
-/* Popup mit Node-Details bei Klick auf einen Geräte-Knoten - eigenes Element statt
-   vis-networks Standard-Hover-Tooltip, da Klick statt Hover gefordert ist. */
+/* popup mit node-details bei klick auf einen geräte-knoten - eigenes element statt
+   vis-networks standard-hover-tooltip, da klick statt hover gefordert ist. */
 .network-node-popup {
     position: absolute;
     z-index: 5;
