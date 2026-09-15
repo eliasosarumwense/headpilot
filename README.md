@@ -1,42 +1,44 @@
+<img src="docs/logo.png" width="96" alt="Headpilot logo">
+
 # Headpilot
 
-Ein eigenes Admin-Dashboard für [Headscale](https://headscale.net/), den selbst gehosteten Ersatz für den Tailscale-Coordination-Server. Headscale bringt von Haus aus kein Web-Interface mit, nur eine REST-API und die CLI. Headpilot setzt genau da an: Geräte verwalten, Benutzer anlegen, Subnet-Routes freigeben, Pre-Auth-Keys generieren und den Zustand des Tailnets auf einen Blick sehen, alles über eine normale Weboberfläche statt SSH und CLI-Befehle.
+A custom admin dashboard for [Headscale](https://headscale.net/), the self-hosted replacement for Tailscale's coordination server. Headscale doesn't ship with a web interface out of the box, just a REST API and a CLI. Headpilot fills that gap: manage devices, create users, approve subnet routes, generate pre-auth keys and see the state of the whole tailnet at a glance, all through a normal web UI instead of SSH and CLI commands.
 
-Login läuft über einen eigenen Keycloak-Server per OIDC. Headpilot verwaltet selbst keine Passwörter oder Benutzerkonten für den Zugriff aufs Dashboard.
+Login runs through a separate Keycloak server via OIDC. Headpilot itself doesn't manage passwords or accounts for dashboard access.
 
-## Geräte
+## Dashboard
 
-Alle registrierten Nodes im Tailnet als Karten, mit Online-Status, IPv4/IPv6-Adressen, Besitzer und letztem Kontakt. Direkt aus der Karte heraus lässt sich ein Gerät umbenennen, seine Sitzung beenden, löschen oder per Ping anpingen.
+Shows at a glance how many users and devices exist, how many are currently online, open pre-auth keys, sessions expiring soon and approved subnet routes. Below that, an interactive graph of the whole tailnet plus a log of the most recent security-relevant actions (logins, changes to devices, users and routes).
 
-![Geräte-Übersicht](docs/screenshots/nodes.png)
+![Dashboard with network graph](docs/screenshots/dashboard.png)
 
-## Startseite
+## Devices
 
-Zeigt auf einen Blick, wie viele Benutzer und Geräte es gibt, wie viele davon gerade online sind, offene Pre-Auth-Keys, bald ablaufende Sitzungen und genehmigte Subnet-Routes. Darunter ein interaktiver Graph des gesamten Tailnets sowie ein Log der letzten sicherheitsrelevanten Aktionen (Logins, Änderungen an Geräten, Benutzern und Routes).
+All registered nodes in the tailnet as cards, with online status, IPv4/IPv6 addresses, owner and last seen time. Right from the card you can rename a device, expire its session, delete it or ping it.
 
-![Startseite mit Netzwerk-Graph](docs/screenshots/dashboard.png)
+![Devices overview](docs/screenshots/nodes.png)
 
-## Benutzer
+## Users
 
-Headscale-Benutzer anlegen, umbenennen und löschen. Wer sich über Keycloak eingeloggt hat, bekommt automatisch Anzeigename und Anmeldeart angezeigt, dazu die Anzahl der Geräte, die diesem Benutzer aktuell zugeordnet sind.
+Create, rename and delete Headscale users. Anyone who logged in via Keycloak automatically shows their display name and login method, plus how many devices are currently assigned to that user.
 
-![Benutzerverwaltung](docs/screenshots/users.png)
+![User management](docs/screenshots/users.png)
 
 ## Status
 
-Bindet eine bestehende [Uptime Kuma](https://github.com/louislam/uptime-kuma)-Instanz direkt über deren Socket.IO-Schnittstelle ein, live und ohne öffentliche Status-Page. Monitore lassen sich direkt aus Headpilot heraus anlegen, bearbeiten und löschen, inklusive Verlaufsanzeige und Antwortzeiten. Eine Discord-Benachrichtigung bei Ausfällen kann mit einem Klick aktiviert werden.
+Hooks into an existing [Uptime Kuma](https://github.com/louislam/uptime-kuma) instance directly through its Socket.IO interface, live and without a public status page. Monitors can be created, edited and deleted right from Headpilot, including history bars and response times. A Discord notification for outages can be turned on with a single click.
 
-![Status-Reiter](docs/screenshots/status.png)
+![Status tab](docs/screenshots/status.png)
 
 ## Pre-Auth Keys
 
-Einladungs-Schlüssel für neue Geräte generieren, wiederverwendbar oder einmalig, mit Ablaufdatum. Fertig genutzte oder nicht mehr benötigte Keys lassen sich sofort ablaufen lassen.
+Generate invite keys for new devices, reusable or one-time, with an expiration date. Keys that are no longer needed can be expired immediately.
 
 ![Pre-Auth Keys](docs/screenshots/keys.png)
 
-## Weitere Reiter
+## Other tabs
 
-Daneben gibt es noch einen Bereich für Subnet-Routes (angekündigte Routen genehmigen oder deaktivieren) und einen Docker-Reiter, der per SSH auf den einzelnen Geräten nachsieht, welche Container dort laufen, praktisch, um auf einen Blick zu sehen, ob z. B. Home Assistant oder ein Reverse Proxy noch läuft.
+There's also a Subnet Routes tab (approve or disable advertised routes) and a Docker tab that checks over SSH which containers are running on each device, handy for seeing at a glance whether something like Home Assistant or a reverse proxy is still up.
 
 ## Setup
 
@@ -45,18 +47,18 @@ npm install
 cp .env.example .env
 ```
 
-In der `.env` müssen mindestens `HEADSCALE_URL`, `HEADSCALE_API_KEY`, die Keycloak-Variablen (`KEYCLOAK_REALM_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `REDIRECT_URI`) und ein zufälliges `SESSION_SECRET` gesetzt sein. Uptime Kuma, die verschlüsselte SSH-Zugangsdaten-Speicherung und das Postgres-Audit-Log sind optional, fehlen die jeweiligen Variablen, schaltet sich das entsprechende Feature einfach sauber ab, ohne dass etwas crasht.
+At minimum, `.env` needs `HEADSCALE_URL`, `HEADSCALE_API_KEY`, the Keycloak variables (`KEYCLOAK_REALM_URL`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `REDIRECT_URI`) and a random `SESSION_SECRET`. Uptime Kuma, the encrypted SSH credential store and the Postgres audit log are optional, if the corresponding variables are missing, that feature just turns itself off cleanly instead of crashing.
 
 ```bash
 npm start
 ```
 
-Läuft danach auf `http://localhost:3000`.
+Runs on `http://localhost:3000`.
 
-## Tech-Stack
+## Tech stack
 
-Node.js mit Express im Backend, im Frontend bewusst kein Framework, sondern schlichtes JavaScript und serverseitig gerenderte HTML-Fragmente. Der Netzwerk-Graph läuft über [vis-network](https://visjs.github.io/vis-network/), die Kuma-Anbindung über die reguläre Socket.IO-Schnittstelle. SSH-Zugangsdaten werden, wenn gewünscht, AES-256-verschlüsselt auf dem Server abgelegt, nie im Klartext.
+Node.js with Express on the backend, no framework on the frontend on purpose, just plain JavaScript and server-rendered HTML fragments. The network graph runs on [vis-network](https://visjs.github.io/vis-network/), the Kuma integration uses its regular Socket.IO interface. SSH credentials, if you choose to save them, are stored AES-256-encrypted on the server, never in plain text.
 
-## Hinweis
+## Note
 
-Headpilot ist ein privates Projekt für mein eigenes Tailnet und auf meinen konkreten Anwendungsfall zugeschnitten. Es erhebt keinen Anspruch darauf, jede Headscale-Funktion abzudecken oder sich 1:1 auf jedes Setup übertragen zu lassen.
+Headpilot is a private project built for my own tailnet and tailored to my specific use case. It doesn't aim to cover every Headscale feature or to translate 1:1 to every setup.
