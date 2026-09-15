@@ -1,4 +1,4 @@
-# <img src="docs/logo.png" width="50" valign="middle" alt="Headpilot logo"> Headpilot
+# <img src="docs/logo.png" width="40" valign="middle" alt="Headpilot logo"> Headpilot
 
 A custom admin dashboard for [Headscale](https://headscale.net/), the self-hosted replacement for Tailscale's coordination server. Headscale doesn't ship with a web interface out of the box, just a REST API and a CLI. Headpilot fills that gap: manage devices, create users, approve subnet routes, generate pre-auth keys and see the state of the whole tailnet at a glance, all through a normal web UI instead of SSH and CLI commands.
 
